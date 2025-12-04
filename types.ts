@@ -48,8 +48,8 @@ export interface Class {
     "Học sinh": string[]; // Student names
     "Student IDs": string[]; // Student IDs
     "Lịch học": ClassSchedule[]; // Weekly schedule
-    "Ngày bắt đầu": string; // Start date
-    "Ngày kết thúc": string; // End date
+    "Ngày bắt đầu"?: string; // Start date (optional - for future use)
+    "Ngày kết thúc"?: string; // End date (optional - for future use)
     "Lương GV"?: number; // Teacher salary (per period or agreed amount)
     "Phòng học"?: string; // Classroom
     "Ghi chú"?: string; // Notes

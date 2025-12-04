@@ -122,12 +122,6 @@ const ClassFormModal = ({
         grade: editingClass["Khối"],
         teacherId: editingClass["Teacher ID"],
         teacherSalary: editingClass["Lương GV"] || 0,
-        startDate: editingClass["Ngày bắt đầu"]
-          ? dayjs(editingClass["Ngày bắt đầu"])
-          : null,
-        endDate: editingClass["Ngày kết thúc"]
-          ? dayjs(editingClass["Ngày kết thúc"])
-          : null,
         roomId: editingClass["Phòng học"],
         tuitionPerSession: editingClass["Học phí mỗi buổi"] || 0,
         status: editingClass["Trạng thái"],
@@ -249,12 +243,6 @@ const ClassFormModal = ({
         "Học sinh": editingClass?.["Học sinh"] || [],
         "Student IDs": editingClass?.["Student IDs"] || [],
         "Lịch học": schedules,
-        "Ngày bắt đầu": values.startDate
-          ? values.startDate.format("YYYY-MM-DD")
-          : "",
-        "Ngày kết thúc": values.endDate
-          ? values.endDate.format("YYYY-MM-DD")
-          : "",
         "Phòng học": values.roomId || "",
         "Địa điểm": selectedRoom ? `${selectedRoom["Địa điểm"]} - ${selectedRoom["Tên phòng"]}` : "",
         "Học phí mỗi buổi": values.tuitionPerSession || 0,
@@ -361,34 +349,6 @@ const ClassFormModal = ({
             }
           />
         </Form.Item>
-
-        <Space style={{ width: "100%" }}>
-          <Form.Item
-            name="startDate"
-            label="Ngày bắt đầu"
-            rules={[{ required: true, message: "Vui lòng chọn ngày bắt đầu" }]}
-            style={{ flex: 1, minWidth: 200 }}
-          >
-            <DatePicker
-              format="DD/MM/YYYY"
-              placeholder="Chọn ngày bắt đầu"
-              style={{ width: "100%" }}
-            />
-          </Form.Item>
-
-          <Form.Item
-            name="endDate"
-            label="Ngày kết thúc"
-            // End date is optional — removed required star per design request
-            style={{ flex: 1, minWidth: 200 }}
-          >
-            <DatePicker
-              format="DD/MM/YYYY"
-              placeholder="Chọn ngày kết thúc"
-              style={{ width: "100%" }}
-            />
-          </Form.Item>
-        </Space>
 
         <Form.Item 
           name="roomId" 

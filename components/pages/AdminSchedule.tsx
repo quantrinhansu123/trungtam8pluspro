@@ -293,18 +293,7 @@ const AdminSchedule = () => {
     const dateStr = date.format("YYYY-MM-DD");
 
     filteredClasses.forEach((classData) => {
-      const startDate = classData["Ngày bắt đầu"]
-        ? dayjs(classData["Ngày bắt đầu"])
-        : null;
-      const endDate = classData["Ngày kết thúc"]
-        ? dayjs(classData["Ngày kết thúc"])
-        : null;
-
-      const isWithinDateRange =
-        (!startDate || date.isSameOrAfter(startDate, "day")) &&
-        (!endDate || date.isSameOrBefore(endDate, "day"));
-
-      if (!isWithinDateRange) return;
+      // Lịch học hiển thị tất cả các tuần (không giới hạn ngày bắt đầu/kết thúc)
 
       // First, check if there's a custom schedule in Thời_khoá_biểu
       const timetableKey = `${classData.id}_${dateStr}_${dayOfWeek}`;
