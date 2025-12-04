@@ -28,7 +28,7 @@ import {
 import { useClasses } from "../../hooks/useClasses";
 import { Class, ClassSchedule } from "../../types";
 import { useNavigate } from "react-router-dom";
-import { ref, onValue, set, push, remove } from "firebase/database";
+import { ref, onValue, set, push, remove, update } from "firebase/database";
 import { database } from "../../firebase";
 import dayjs, { Dayjs } from "dayjs";
 import isSameOrAfter from "dayjs/plugin/isSameOrAfter";
@@ -62,6 +62,8 @@ interface TimetableEntry {
   "Giờ kết thúc": string;
   "Phòng học"?: string;
   "Ghi chú"?: string;
+  "Thay thế ngày"?: string; // Ngày gốc bị thay thế (dùng khi di chuyển lịch)
+  "Thay thế thứ"?: number; // Thứ gốc bị thay thế
 }
 
 type FilterMode = "class" | "subject" | "teacher" | "location";
@@ -142,6 +144,21 @@ const AdminSchedule = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Helper: Check if a date is replaced by a custom schedule (moved to another day)
+  const isDateReplacedByCustomSchedule = (classId: string, dateStr: string, dayOfWeek: number): boolean => {
+    // Check if any timetable entry has replaced this date
+    for (const [, entry] of timetableEntries) {
+      if (
+        entry["Class ID"] === classId &&
+        entry["Thay thế ngày"] === dateStr &&
+        entry["Thay thế thứ"] === dayOfWeek
+      ) {
+        return true; // This date has been moved to another day
+      }
+    }
+    return false;
+  };
 
   // Helper to get room name from ID
   const getRoomName = (roomId: string): string => {
@@ -308,6 +325,11 @@ const AdminSchedule = () => {
           });
         }
       } else {
+        // Check if this date has been replaced by a custom schedule (moved to another day)
+        if (isDateReplacedByCustomSchedule(classData.id, dateStr, dayOfWeek)) {
+          return; // Skip - this date's schedule has been moved
+        }
+
         // Fallback to class schedule
         if (!classData["Lịch học"] || classData["Lịch học"].length === 0) {
           return;
@@ -377,34 +399,6 @@ const AdminSchedule = () => {
       const dateStr = editingEvent.date;
       const dayOfWeek = dayjs(dateStr).day() === 0 ? 8 : dayjs(dateStr).day() + 1;
 
-      // Tìm và xóa TẤT CẢ entry cũ của lớp này trong cùng ngày/thứ
-      const entriesToDelete: string[] = [];
-      
-      // Nếu có scheduleId, thêm vào danh sách xóa
-      if (editingEvent.scheduleId) {
-        entriesToDelete.push(editingEvent.scheduleId);
-      }
-      
-      // Tìm tất cả entry cũ có cùng Class ID + Ngày + Thứ
-      timetableEntries.forEach((entry) => {
-        if (
-          entry["Class ID"] === editingEvent.class.id &&
-          entry["Ngày"] === dateStr &&
-          entry["Thứ"] === dayOfWeek &&
-          entry.id !== editingEvent.scheduleId // Tránh xóa trùng
-        ) {
-          entriesToDelete.push(entry.id);
-        }
-      });
-
-      // Xóa tất cả entry cũ
-      const deletePromises = entriesToDelete.map((entryId) => {
-        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${entryId}`);
-        return remove(entryRef);
-      });
-      await Promise.all(deletePromises);
-
-      // Tạo entry mới
       const timetableData: Omit<TimetableEntry, "id"> = {
         "Class ID": editingEvent.class.id,
         "Mã lớp": editingEvent.class["Mã lớp"] || "",
@@ -417,11 +411,18 @@ const AdminSchedule = () => {
         "Ghi chú": values["Ghi chú"] || "",
       };
 
-      const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-      const newEntryRef = push(timetableRef);
-      await set(newEntryRef, timetableData);
-      
-      message.success(`Đã cập nhật lịch học (đã xóa ${entriesToDelete.length} entry cũ)`);
+      // Nếu đang sửa lịch bù hiện có (có scheduleId), update trực tiếp entry đó
+      if (editingEvent.scheduleId) {
+        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${editingEvent.scheduleId}`);
+        await set(entryRef, timetableData);
+        message.success("Đã cập nhật lịch học bù");
+      } else {
+        // Tạo lịch bù mới
+        const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
+        const newEntryRef = push(timetableRef);
+        await set(newEntryRef, timetableData);
+        message.success("Đã tạo lịch học bù mới");
+      }
 
       setIsEditModalOpen(false);
       setEditingEvent(null);
@@ -467,36 +468,9 @@ const AdminSchedule = () => {
       const newDate = values["Ngày"].format("YYYY-MM-DD");
       const dayOfWeek = values["Ngày"].day() === 0 ? 8 : values["Ngày"].day() + 1;
       const oldDate = inlineEditing.event.date;
-      const oldDayOfWeek = dayjs(oldDate).day() === 0 ? 8 : dayjs(oldDate).day() + 1;
+      const oldDayOfWeek = inlineEditing.event.schedule["Thứ"];
 
-      // Tìm và xóa TẤT CẢ entry cũ của lớp này trong cùng ngày/thứ
-      const entriesToDelete: string[] = [];
-      
-      // Nếu có scheduleId, thêm vào danh sách xóa
-      if (inlineEditing.event.scheduleId) {
-        entriesToDelete.push(inlineEditing.event.scheduleId);
-      }
-      
-      // Tìm tất cả entry cũ có cùng Class ID + Ngày cũ + Thứ cũ
-      timetableEntries.forEach((entry, key) => {
-        if (
-          entry["Class ID"] === inlineEditing.event.class.id &&
-          entry["Ngày"] === oldDate &&
-          entry["Thứ"] === oldDayOfWeek &&
-          entry.id !== inlineEditing.event.scheduleId // Tránh xóa trùng
-        ) {
-          entriesToDelete.push(entry.id);
-        }
-      });
-
-      // Xóa tất cả entry cũ
-      const deletePromises = entriesToDelete.map((entryId) => {
-        const entryRef = ref(database, `datasheet/Thời_khoá_biểu/${entryId}`);
-        return remove(entryRef);
-      });
-      await Promise.all(deletePromises);
-
-      // Tạo entry mới
+      // Chuẩn bị dữ liệu cập nhật
       const timetableData: Omit<TimetableEntry, "id"> = {
         "Class ID": inlineEditing.event.class.id,
         "Mã lớp": inlineEditing.event.class["Mã lớp"] || "",
@@ -508,11 +482,42 @@ const AdminSchedule = () => {
         "Phòng học": inlineEditing.event.class["Phòng học"] || "",
       };
 
-      const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
-      const newEntryRef = push(timetableRef);
-      await set(newEntryRef, timetableData);
-      
-      message.success(`Đã cập nhật lịch học (đã xóa ${entriesToDelete.length} entry cũ)`);
+      // Nếu đổi ngày và đây là lịch mặc định (không phải lịch bù), 
+      // thêm thông tin ngày gốc bị thay thế
+      if (newDate !== oldDate && !inlineEditing.event.isCustomSchedule) {
+        (timetableData as any)["Thay thế ngày"] = oldDate;
+        (timetableData as any)["Thay thế thứ"] = oldDayOfWeek;
+      }
+
+      // Nếu có scheduleId (lịch học bù đang sửa) và ngày không đổi -> cập nhật tại chỗ
+      if (inlineEditing.event.scheduleId && newDate === oldDate) {
+        const existingRef = ref(database, `datasheet/Thời_khoá_biểu/${inlineEditing.event.scheduleId}`);
+        await update(existingRef, timetableData);
+        message.success("Đã cập nhật lịch học bù");
+      } else if (inlineEditing.event.scheduleId) {
+        // Có scheduleId nhưng ngày đổi -> xóa entry cũ và tạo mới (giữ lại thông tin thay thế nếu có)
+        const oldEntryRef = ref(database, `datasheet/Thời_khoá_biểu/${inlineEditing.event.scheduleId}`);
+        
+        // Lấy thông tin thay thế cũ nếu có
+        const oldEntry = timetableEntries.get(`${inlineEditing.event.class.id}_${oldDate}_${oldDayOfWeek}`);
+        if (oldEntry && oldEntry["Thay thế ngày"]) {
+          (timetableData as any)["Thay thế ngày"] = oldEntry["Thay thế ngày"];
+          (timetableData as any)["Thay thế thứ"] = oldEntry["Thay thế thứ"];
+        }
+        
+        await remove(oldEntryRef);
+        
+        const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
+        const newEntryRef = push(timetableRef);
+        await set(newEntryRef, timetableData);
+        message.success("Đã cập nhật lịch học bù (đổi ngày)");
+      } else {
+        // Không có scheduleId -> tạo mới
+        const timetableRef = ref(database, "datasheet/Thời_khoá_biểu");
+        const newEntryRef = push(timetableRef);
+        await set(newEntryRef, timetableData);
+        message.success("Đã tạo lịch học bù mới");
+      }
 
       setInlineEditing(null);
       inlineForm.resetFields();
