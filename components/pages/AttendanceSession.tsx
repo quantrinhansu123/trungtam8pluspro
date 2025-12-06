@@ -1037,18 +1037,9 @@ const AttendanceSessionPage = () => {
           }}
           size="small"
         >
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <p style={{ margin: 0 }}>
-              ✅ Buổi học này đã hoàn thành điểm danh. Bạn có thể sửa điểm danh nếu cần.
-            </p>
-            <Button
-              type="primary"
-              icon={<EditOutlined />}
-              onClick={() => setIsEditingMode(true)}
-            >
-              Sửa điểm danh
-            </Button>
-          </div>
+          <p style={{ margin: 0 }}>
+            ✅ Buổi học này đã hoàn thành điểm danh. Bạn có thể sửa điểm danh nếu cần.
+          </p>
         </Card>
       )}
 
@@ -1206,6 +1197,15 @@ const AttendanceSessionPage = () => {
                   }
                   setCurrentStep(0);
                 }}>Quay lại</Button>
+                {existingSession && !isEditingMode && (
+                  <Button
+                    type="default"
+                    icon={<EditOutlined />}
+                    onClick={() => setIsEditingMode(true)}
+                  >
+                    Sửa điểm danh
+                  </Button>
+                )}
                 {existingSession && isEditingMode ? (
                   <Button
                     type="primary"

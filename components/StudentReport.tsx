@@ -1307,9 +1307,6 @@ const StudentReport = ({
               <Radio.Button value="session">
                 📋 Báo cáo theo buổi (Chi tiết)
               </Radio.Button>
-              <Radio.Button value="monthly">
-                📊 Báo cáo theo tháng (Tổng hợp)
-              </Radio.Button>
             </Radio.Group>
           </Space>
         </Card>
