@@ -13,7 +13,7 @@ import {
   Popconfirm,
   message,
 } from "antd";
-import { EyeOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, PrinterOutlined } from "@ant-design/icons";
+import { EyeOutlined, EditOutlined, DeleteOutlined, DownloadOutlined, PrinterOutlined, ClockCircleOutlined, LoginOutlined, LogoutOutlined } from "@ant-design/icons";
 import { useParams, useNavigate } from "react-router-dom";
 import { ref, onValue, update, remove } from "firebase/database";
 import { database } from "../../firebase";
@@ -403,6 +403,32 @@ const ClassSessionHistory = () => {
           disabled={!record["Có mặt"]}
         />
       ),
+    },
+    {
+      title: "Giờ check-in",
+      key: "checkin",
+      width: 100,
+      render: (_: any, record: AttendanceRecord) => {
+        if (!record["Có mặt"]) return "-";
+        return record["Giờ check-in"] ? (
+          <Tag icon={<LoginOutlined />} color="success">
+            {record["Giờ check-in"]}
+          </Tag>
+        ) : "-";
+      },
+    },
+    {
+      title: "Giờ check-out",
+      key: "checkout",
+      width: 100,
+      render: (_: any, record: AttendanceRecord) => {
+        if (!record["Có mặt"]) return "-";
+        return record["Giờ check-out"] ? (
+          <Tag icon={<LogoutOutlined />} color="warning">
+            {record["Giờ check-out"]}
+          </Tag>
+        ) : "-";
+      },
     },
     {
       title: "Vắng có phép",

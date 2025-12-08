@@ -1584,6 +1584,17 @@ const ParentPortal: React.FC = () => {
                         (r: any) => r["Student ID"] === userProfile?.studentId
                       );
 
+                      // Calculate study duration if both check-in and check-out exist
+                      let studyDuration = "";
+                      if (record?.["Giờ check-in"] && record?.["Giờ check-out"]) {
+                        const checkIn = dayjs(`2000-01-01 ${record["Giờ check-in"]}`);
+                        const checkOut = dayjs(`2000-01-01 ${record["Giờ check-out"]}`);
+                        const minutes = checkOut.diff(checkIn, "minute");
+                        const hours = Math.floor(minutes / 60);
+                        const mins = minutes % 60;
+                        studyDuration = hours > 0 ? `${hours}h ${mins}m` : `${mins}m`;
+                      }
+
                       return {
                         color: record?.["Có mặt"]
                           ? "green"
@@ -1609,6 +1620,29 @@ const ParentPortal: React.FC = () => {
                               )}
                               {record?.["Đi muộn"] && <Tag color="orange">Đi muộn</Tag>}
                             </div>
+                            {record?.["Có mặt"] && (record?.["Giờ check-in"] || record?.["Giờ check-out"]) && (
+                              <div style={{ marginTop: 8, padding: "8px", backgroundColor: "#f0f9ff", borderRadius: "4px", border: "1px solid #91d5ff" }}>
+                                <Space direction="vertical" size={4} style={{ width: "100%" }}>
+                                  {record?.["Giờ check-in"] && (
+                                    <div style={{ fontSize: "12px" }}>
+                                      <ClockCircleOutlined style={{ color: "#52c41a", marginRight: 4 }} />
+                                      <strong>Check-in:</strong> {record["Giờ check-in"]}
+                                    </div>
+                                  )}
+                                  {record?.["Giờ check-out"] && (
+                                    <div style={{ fontSize: "12px" }}>
+                                      <ClockCircleOutlined style={{ color: "#fa8c16", marginRight: 4 }} />
+                                      <strong>Check-out:</strong> {record["Giờ check-out"]}
+                                    </div>
+                                  )}
+                                  {studyDuration && (
+                                    <div style={{ fontSize: "12px", color: "#1890ff", fontWeight: 500 }}>
+                                      ⏱️ Thời gian học: {studyDuration}
+                                    </div>
+                                  )}
+                                </Space>
+                              </div>
+                            )}
                             {record?.["Ghi chú"] && (
                               <div style={{ marginTop: 4, color: "#666" }}>
                                 Ghi chú: {record["Ghi chú"]}

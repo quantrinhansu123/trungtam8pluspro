@@ -15,7 +15,7 @@ import {
   Popconfirm,
   Empty,
 } from "antd";
-import { SaveOutlined, CheckOutlined, GiftOutlined, HistoryOutlined, EditOutlined, DeleteOutlined } from "@ant-design/icons";
+import { SaveOutlined, CheckOutlined, GiftOutlined, HistoryOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined, LoginOutlined, LogoutOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ref, onValue, push, set, update, remove } from "firebase/database";
 import { database } from "../../firebase";
@@ -183,7 +183,14 @@ const AttendanceSessionPage = () => {
     setAttendanceRecords((prev) =>
       prev.map((record) =>
         record["Student ID"] === studentId
-          ? { ...record, "Có mặt": present }
+          ? { 
+              ...record, 
+              "Có mặt": present,
+              // Tự động ghi giờ check-in khi tick "Có mặt"
+              "Giờ check-in": present && !record["Giờ check-in"] 
+                ? dayjs().format("HH:mm:ss") 
+                : record["Giờ check-in"]
+            }
           : record
       )
     );
@@ -255,6 +262,41 @@ const AttendanceSessionPage = () => {
         return record;
       })
     );
+  };
+
+  // Handle check-out - ghi giờ check-out
+  const handleCheckOut = async (studentId: string) => {
+    const checkOutTime = dayjs().format("HH:mm:ss");
+    
+    setAttendanceRecords((prev) =>
+      prev.map((record) =>
+        record["Student ID"] === studentId
+          ? { ...record, "Giờ check-out": checkOutTime }
+          : record
+      )
+    );
+
+    // Auto-save to Firebase if session exists
+    if (sessionId && existingSession) {
+      try {
+        const sessionRef = ref(database, `datasheet/Điểm_danh_sessions/${sessionId}`);
+        const updatedRecord = attendanceRecords.find(r => r["Student ID"] === studentId);
+        if (updatedRecord) {
+          const updatedAttendance = attendanceRecords.map(r => 
+            r["Student ID"] === studentId 
+              ? { ...r, "Giờ check-out": checkOutTime }
+              : r
+          );
+          await update(sessionRef, {
+            "Điểm danh": updatedAttendance,
+          });
+          message.success("Đã ghi nhận giờ check-out");
+        }
+      } catch (error) {
+        console.error("Error saving check-out time:", error);
+        message.error("Không thể lưu giờ check-out");
+      }
+    }
   };
 
   // Handle exercises completed change - auto-save to Firebase if session exists
@@ -881,6 +923,56 @@ const AttendanceSessionPage = () => {
       },
     },
     {
+      title: "Giờ check-in",
+      key: "checkin",
+      width: 120,
+      render: (_: any, record: Student) => {
+        const attendanceRecord = attendanceRecords.find(
+          (r) => r["Student ID"] === record.id
+        );
+        if (!attendanceRecord?.["Có mặt"]) return "-";
+        
+        return attendanceRecord?.["Giờ check-in"] ? (
+          <Tag icon={<LoginOutlined />} color="success">
+            {attendanceRecord["Giờ check-in"]}
+          </Tag>
+        ) : (
+          <Tag color="default">Chưa check-in</Tag>
+        );
+      },
+    },
+    {
+      title: "Check-out",
+      key: "checkout",
+      width: 140,
+      render: (_: any, record: Student) => {
+        const attendanceRecord = attendanceRecords.find(
+          (r) => r["Student ID"] === record.id
+        );
+        if (!attendanceRecord?.["Có mặt"] || !attendanceRecord?.["Giờ check-in"]) return "-";
+        
+        if (attendanceRecord?.["Giờ check-out"]) {
+          return (
+            <Tag icon={<LogoutOutlined />} color="warning">
+              {attendanceRecord["Giờ check-out"]}
+            </Tag>
+          );
+        }
+        
+        return (
+          <Button
+            size="small"
+            type="primary"
+            icon={<LogoutOutlined />}
+            onClick={() => handleCheckOut(record.id)}
+            disabled={isReadOnly}
+          >
+            Check-out
+          </Button>
+        );
+      },
+    },
+    {
       title: "Ghi chú",
       key: "note",
       width: 200,
@@ -934,6 +1026,57 @@ const AttendanceSessionPage = () => {
             onChange={(e) => handleLateChange(record.id, e.target.checked)}
             disabled={isReadOnly}
           />
+        );
+      },
+    },
+    {
+      title: "Giờ check-in",
+      key: "checkin",
+      width: 110,
+      render: (_: any, record: Student) => {
+        const attendanceRecord = attendanceRecords.find(
+          (r) => r["Student ID"] === record.id
+        );
+        if (!attendanceRecord?.["Có mặt"]) return "-";
+        
+        return attendanceRecord?.["Giờ check-in"] ? (
+          <Tag icon={<LoginOutlined />} color="success" style={{ fontSize: "11px" }}>
+            {attendanceRecord["Giờ check-in"]}
+          </Tag>
+        ) : (
+          <Tag color="default" style={{ fontSize: "11px" }}>Chưa check-in</Tag>
+        );
+      },
+    },
+    {
+      title: "Check-out",
+      key: "checkout",
+      width: 120,
+      render: (_: any, record: Student) => {
+        const attendanceRecord = attendanceRecords.find(
+          (r) => r["Student ID"] === record.id
+        );
+        if (!attendanceRecord?.["Có mặt"] || !attendanceRecord?.["Giờ check-in"]) return "-";
+        
+        if (attendanceRecord?.["Giờ check-out"]) {
+          return (
+            <Tag icon={<LogoutOutlined />} color="warning" style={{ fontSize: "11px" }}>
+              {attendanceRecord["Giờ check-out"]}
+            </Tag>
+          );
+        }
+        
+        return (
+          <Button
+            size="small"
+            type="primary"
+            icon={<LogoutOutlined />}
+            onClick={() => handleCheckOut(record.id)}
+            disabled={isReadOnly}
+            style={{ fontSize: "11px", padding: "0 8px", height: "24px" }}
+          >
+            Check-out
+          </Button>
         );
       },
     },
