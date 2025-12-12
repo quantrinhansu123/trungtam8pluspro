@@ -362,10 +362,13 @@ const ClassFormModal = ({
             filterOption={(input, option) =>
               (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
             }
-            options={rooms.map((room) => ({
-              value: room.id,
-              label: `${room["Tên phòng"]} - ${room["Địa điểm"]}`,
-            }))}
+            options={[
+              { value: "", label: "Trống (Không có phòng)" },
+              ...rooms.map((room) => ({
+                value: room.id,
+                label: `${room["Tên phòng"]} - ${room["Địa điểm"]}`,
+              })),
+            ]}
           />
         </Form.Item>
 
