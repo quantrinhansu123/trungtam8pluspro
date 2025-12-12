@@ -353,7 +353,6 @@ const ClassFormModal = ({
         <Form.Item 
           name="roomId" 
           label="Phòng học"
-          rules={[{ required: true, message: "Vui lòng chọn phòng học" }]}
         >
           <Select
             placeholder="Chọn phòng học"
