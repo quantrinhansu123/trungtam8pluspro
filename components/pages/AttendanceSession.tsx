@@ -21,9 +21,10 @@ import {
 import { SaveOutlined, CheckOutlined, GiftOutlined, HistoryOutlined, EditOutlined, DeleteOutlined, ClockCircleOutlined, LoginOutlined, LogoutOutlined, UploadOutlined, PaperClipOutlined, FileOutlined } from "@ant-design/icons";
 import { useLocation, useNavigate } from "react-router-dom";
 import { ref, onValue, push, set, update, remove } from "firebase/database";
-import { database } from "../../firebase";
+import { database, DATABASE_URL_BASE } from "../../firebase";
 import { useAuth } from "../../contexts/AuthContext";
 import { Class, AttendanceSession, AttendanceRecord } from "../../types";
+import { subjectOptions } from "@/utils/selectOptions";
 import dayjs from "dayjs";
 import WrapperContent from "@/components/WrapperContent";
 import { uploadToCloudinary, generateFolderPath } from "@/utils/cloudinaryStorage";
@@ -110,6 +111,151 @@ const AttendanceSessionPage = () => {
     currentTime: string;
   } | null>(null);
   const [tempTime, setTempTime] = useState<any>(null);
+
+  // Sync invoices ONLY for students in the current class session being saved
+  // This prevents creating invoices for students in other classes
+  const syncInvoicesForCurrentSession = async (
+    targetMonth: number,
+    targetYear: number,
+    currentClassId: string,
+    currentAttendanceRecords: AttendanceRecord[]
+  ) => {
+    try {
+      const [studentsRes, classesRes, coursesRes, invoicesRes] = await Promise.all([
+        fetch(`${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh.json`),
+        fetch(`${DATABASE_URL_BASE}/datasheet/L%E1%BB%9Bp_h%E1%BB%8Dc.json`),
+        fetch(`${DATABASE_URL_BASE}/datasheet/Kh%C3%B3a_h%E1%BB%8Dc.json`),
+        fetch(`${DATABASE_URL_BASE}/datasheet/Phi%E1%BA%BFu_thu_h%E1%BB%8Dc_ph%C3%AD.json`),
+      ]);
+
+      const [studentsData, classesData, coursesData, invoicesData] = await Promise.all([
+        studentsRes.json(),
+        classesRes.json(),
+        coursesRes.json(),
+        invoicesRes.json(),
+      ]);
+
+      const studentsList = studentsData
+        ? Object.entries(studentsData).map(([id, value]: [string, any]) => ({ id, ...(value as any) }))
+        : [];
+      const classesList = classesData
+        ? Object.entries(classesData).map(([id, value]: [string, any]) => ({ id, ...(value as any) }))
+        : [];
+      const coursesList = coursesData
+        ? Object.entries(coursesData).map(([id, value]: [string, any]) => ({ id, ...(value as any) }))
+        : [];
+      const existingInvoices: Record<string, any> = invoicesData || {};
+
+      const studentsMap = Object.fromEntries(studentsList.map((s) => [s.id, s]));
+      const classesMap = Object.fromEntries(classesList.map((c) => [c.id, c]));
+
+      const findCourse = (classInfo: any) => {
+        if (!classInfo) return undefined;
+        const classSubject = classInfo["Môn học"];
+        const classGrade = classInfo["Khối"];
+        return coursesList.find((c) => {
+          if (c["Khối"] !== classGrade) return false;
+          const courseSubject = c["Môn học"];
+          if (courseSubject === classSubject) return true;
+          const subjectOption = subjectOptions.find(
+            (opt) => opt.label === classSubject || opt.value === classSubject
+          );
+          if (subjectOption) {
+            return courseSubject === subjectOption.label || courseSubject === subjectOption.value;
+          }
+          return false;
+        });
+      };
+
+      // Get class info and price for current class
+      const classInfo = classesMap[currentClassId];
+      const course = findCourse(classInfo);
+      const pricePerSession = course?.Giá || classInfo?.["Học phí mỗi buổi"] || 0;
+
+      if (pricePerSession === 0) {
+        console.log("[InvoiceSync] Skipped - pricePerSession is 0 for class", currentClassId);
+        return;
+      }
+
+      const upsertPromises: Promise<void>[] = [];
+
+      // Only process students in the current attendance records
+      currentAttendanceRecords.forEach((record) => {
+        const studentId = record["Student ID"];
+        const isPresent = record["Có mặt"] === true;
+        const isExcused = record["Vắng có phép"] === true;
+
+        // Only create invoice for students who are present or excused
+        if (!studentId || (!isPresent && !isExcused)) return;
+
+        const student = studentsMap[studentId];
+        const key = `${studentId}-${targetMonth}-${targetYear}`;
+        const existing = existingInvoices[key];
+        const existingStatus = typeof existing === "object" && existing !== null ? existing.status : existing;
+        const isPaid = existingStatus === "paid";
+
+        // Don't modify paid invoices
+        if (isPaid) return;
+
+        const sessionInfo = {
+          Ngày: sessionDate,
+          "Tên lớp": classData["Tên lớp"],
+          "Mã lớp": classData["Mã lớp"],
+          "Class ID": currentClassId,
+        };
+
+        // If invoice already exists, add this session to it
+        if (existing && typeof existing === "object") {
+          const existingSessions = Array.isArray(existing.sessions) ? existing.sessions : [];
+          // Check if this session already exists in the invoice
+          const sessionExists = existingSessions.some(
+            (s: any) => s["Ngày"] === sessionDate && s["Class ID"] === currentClassId
+          );
+          
+          if (!sessionExists) {
+            const updatedInvoice = {
+              ...existing,
+              totalSessions: (existing.totalSessions || 0) + 1,
+              totalAmount: (existing.totalAmount || 0) + pricePerSession,
+              finalAmount: Math.max(0, (existing.totalAmount || 0) + pricePerSession - (existing.discount || 0)),
+              sessions: [...existingSessions, sessionInfo],
+            };
+            const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+            upsertPromises.push(update(invoiceRef, updatedInvoice));
+          }
+        } else {
+          // Create new invoice for this student
+          const newInvoice = {
+            id: key,
+            studentId,
+            studentName: student?.["Họ và tên"] || record["Tên học sinh"] || "",
+            studentCode: student?.["Mã học sinh"] || "",
+            month: targetMonth,
+            year: targetYear,
+            totalSessions: 1,
+            totalAmount: pricePerSession,
+            discount: 0,
+            finalAmount: pricePerSession,
+            status: "unpaid",
+            sessions: [sessionInfo],
+          };
+          const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+          upsertPromises.push(update(invoiceRef, newInvoice));
+        }
+      });
+
+      await Promise.all(upsertPromises);
+      console.log("[InvoiceSync] Synced invoices for current session", {
+        classId: currentClassId,
+        month: targetMonth + 1,
+        year: targetYear,
+        studentsProcessed: currentAttendanceRecords.filter(r => r["Có mặt"] || r["Vắng có phép"]).length,
+        invoicesCreatedOrUpdated: upsertPromises.length,
+      });
+    } catch (error) {
+      console.error("[InvoiceSync] Failed to sync invoices", error);
+    }
+  };
 
   // Load custom schedule from Thời_khoá_biểu
   useEffect(() => {
@@ -1023,6 +1169,21 @@ const AttendanceSessionPage = () => {
         const sessionsRef = ref(database, "datasheet/Điểm_danh_sessions");
         const newSessionRef = push(sessionsRef);
         await set(newSessionRef, cleanedData);
+        setSessionId(newSessionRef.key || null);
+      }
+
+      // After saving attendance, sync invoices ONLY for students in this class session
+      const sessionDateObj = new Date(sessionDate);
+      if (!isNaN(sessionDateObj.getTime())) {
+        // Only sync invoices for students in current attendance records
+        await syncInvoicesForCurrentSession(
+          sessionDateObj.getMonth(),
+          sessionDateObj.getFullYear(),
+          classData.id,
+          attendanceRecords
+        );
+      } else {
+        console.warn("[InvoiceSync] sessionDate is invalid, skipped invoice sync", sessionDate);
       }
 
       // Clear attendance info

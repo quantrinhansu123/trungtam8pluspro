@@ -10,42 +10,55 @@ const DiscountInput: React.FC<DiscountInputProps> = ({
   record,
   updateStudentDiscount,
 }) => {
-  const inputRef = useRef<any>(null);
-  const valueRef = useRef<number>(record.discount);
+  const [localValue, setLocalValue] = React.useState<number>(record.discount);
+  const saveTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   const isPaid = record.status === "paid";
+
+  // Update local value when record changes
+  React.useEffect(() => {
+    setLocalValue(record.discount);
+  }, [record.discount]);
 
   const handleChange = (value: number | null) => {
     const numValue = value ?? 0;
-    console.log("📝 Value changed to:", numValue);
-    valueRef.current = numValue;
-  };
-
-  const handleSave = () => {
-    // Lấy giá trị từ input element
-    const currentValue = inputRef.current?.value ?? valueRef.current;
-    console.log("🔘 Enter pressed, input value:", inputRef.current?.value);
-    console.log("🔘 Ref value:", valueRef.current);
-    console.log("🔘 Final value to save:", currentValue);
-    console.log("🔘 Is paid?", isPaid);
-
+    setLocalValue(numValue);
+    
     if (isPaid) {
-      console.log("❌ Cannot update - invoice is paid");
       return;
     }
 
-    updateStudentDiscount(record.id, currentValue);
+    // Clear previous timeout
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+
+    // Auto-save after 800ms of no typing (debounce)
+    saveTimeoutRef.current = setTimeout(() => {
+      updateStudentDiscount(record.id, numValue);
+    }, 800);
+  };
+
+  const handleSave = () => {
+    if (isPaid) {
+      return;
+    }
+
+    // Clear timeout and save immediately
+    if (saveTimeoutRef.current) {
+      clearTimeout(saveTimeoutRef.current);
+    }
+    updateStudentDiscount(record.id, localValue);
   };
 
   return (
     <Space.Compact style={{ width: "100%" }}>
       <InputNumber
-        ref={inputRef}
-        key={record.discount} // Force re-render when discount changes
-        defaultValue={record.discount}
+        value={localValue}
         min={0}
         max={record.totalAmount}
         onChange={handleChange}
         onPressEnter={handleSave}
+        onBlur={handleSave}
         style={{ width: "100%" }}
         size="small"
         disabled={isPaid}

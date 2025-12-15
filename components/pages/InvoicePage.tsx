@@ -101,6 +101,26 @@ interface StudentInvoice {
   status: "paid" | "unpaid";
   sessions: AttendanceSession[];
   invoiceImage?: string; // Base64 image data
+  // Class information
+  className?: string;
+  classCode?: string;
+  subject?: string;
+  pricePerSession?: number;
+}
+
+// Grouped invoice by student (for expandable rows)
+interface GroupedStudentInvoice {
+  studentId: string;
+  studentName: string;
+  studentCode: string;
+  month: number;
+  year: number;
+  invoices: StudentInvoice[]; // Multiple invoices if student has multiple classes
+  totalSessions: number; // Sum of all classes
+  totalAmount: number; // Sum of all classes
+  discount: number; // Total discount
+  finalAmount: number; // Total final amount
+  status: "paid" | "unpaid"; // "paid" only if all invoices are paid
 }
 
 interface TeacherSalary {
@@ -353,422 +373,112 @@ const InvoicePage = () => {
 
   // No longer need calculateTravelAllowance - using salary per session instead
 
-  // Calculate student invoices
+  // Load student invoices directly from Firebase (populated by attendance save)
   const studentInvoices = useMemo(() => {
-    const invoicesMap: Record<string, StudentInvoice> = {};
+    console.log(`📋 Loading invoices from Firebase for month ${studentMonth + 1}/${studentYear}`);
+    
+    const invoicesList: StudentInvoice[] = [];
 
-    // First, load all paid invoices from Firebase (these are immutable)
+    // Load all invoices from Firebase that match the selected month/year
     Object.entries(studentInvoiceStatus).forEach(([key, data]) => {
       if (!data) return;
-
-      const status = typeof data === "string" ? data : data.status;
-
-      // If paid and has complete data in Firebase, use it directly
-      if (status === "paid" && typeof data === "object" && data.studentId) {
-        // Only include if it matches the selected month/year
-        if (data.month === studentMonth && data.year === studentYear) {
-          invoicesMap[key] = {
-            id: key,
-            studentId: data.studentId,
-            studentName: data.studentName || "",
-            studentCode: data.studentCode || "",
-            month: data.month ?? 0,
-            year: data.year ?? 0,
-            totalSessions: data.totalSessions ?? 0,
-            totalAmount: data.totalAmount ?? 0,
-            discount: data.discount ?? 0,
-            finalAmount: data.finalAmount ?? 0,
-            status: "paid",
-            sessions: data.sessions || [],
-          };
-        }
-      }
-    });
-
-    // Then calculate unpaid invoices from sessions
-    console.log(`🔍 Calculating invoices for month ${studentMonth + 1}/${studentYear}`);
-    console.log(`🔍 Total sessions loaded: ${sessions.length}`);
-    console.log(`🔍 Total students: ${students.length}`);
-    console.log(`🔍 Total classes: ${classes.length}`);
-    console.log(`🔍 Total courses: ${courses.length}`);
-    
-    let sessionsProcessed = 0;
-    let recordsProcessed = 0;
-    let invoicesCreated = 0;
-    
-    sessions.forEach((session) => {
-      if (!session["Ngày"]) {
-        console.log(`⚠️ Session ${session.id} has no date`);
-        return;
-      }
       
-      const sessionDate = new Date(session["Ngày"]);
-      if (isNaN(sessionDate.getTime())) {
-        console.log(`⚠️ Session ${session.id} has invalid date: ${session["Ngày"]}`);
-        return;
-      }
-      
-      const sessionMonth = sessionDate.getMonth();
-      const sessionYear = sessionDate.getFullYear();
-
-      // Only process sessions in the selected month/year
-      if (sessionMonth !== studentMonth || sessionYear !== studentYear) {
+      // Skip deleted invoices
+      if (typeof data === "object" && data !== null && (data as any).deleted === true) {
+        console.log(`⏭️ Skipping deleted invoice: ${key}`);
         return;
       }
 
-      sessionsProcessed++;
-      
-      // Debug: log all sessions to see what we're working with
-      console.log(`📅 Session ${session.id} matches month/year:`, {
-        date: session["Ngày"],
-        hasAttendance: !!session["Điểm danh"],
-        attendanceType: Array.isArray(session["Điểm danh"]) ? "array" : typeof session["Điểm danh"],
-        classId: session["Class ID"],
-        className: session["Tên lớp"]
-      });
-
-      if (!session["Điểm danh"]) {
-        console.log(`⚠️ Session ${session.id} has no attendance records`);
-        return;
-      }
-
-      // Handle both array and object format
-      let attendanceRecords: any[] = [];
-      if (Array.isArray(session["Điểm danh"])) {
-        attendanceRecords = session["Điểm danh"];
-      } else if (typeof session["Điểm danh"] === "object" && session["Điểm danh"] !== null) {
-        attendanceRecords = Object.values(session["Điểm danh"]);
+      // Parse invoice data
+      let invoiceData: any = {};
+      if (typeof data === "object" && data !== null) {
+        invoiceData = data;
       } else {
-        console.log(`⚠️ Session ${session.id} has invalid attendance format`);
+        // If data is just a status string, create minimal object
+        invoiceData = { status: data };
+      }
+
+      const status = invoiceData.status || "unpaid";
+      const month = invoiceData.month ?? 0;
+      const year = invoiceData.year ?? 0;
+
+      // Only include invoices matching selected month/year
+      if (month !== studentMonth || year !== studentYear) {
         return;
       }
+
+      // Get student info
+      const studentId = invoiceData.studentId || key.split("-")[0];
+      const student = students.find((s) => String(s.id) === String(studentId));
+
+      // Get class/course info from sessions
+      let className = "";
+      let classCode = "";
+      let subject = "";
+      let pricePerSession = 0;
       
-      console.log(`📅 Session ${session.id} (${session["Ngày"]}): ${attendanceRecords.length} attendance records`);
-      
-      attendanceRecords.forEach((record: any) => {
-        if (!record) return;
+      if (invoiceData.sessions && invoiceData.sessions.length > 0) {
+        const firstSession = invoiceData.sessions[0];
+        className = firstSession["Tên lớp"] || "";
+        classCode = firstSession["Mã lớp"] || "";
         
-        recordsProcessed++;
-        const studentId = record["Student ID"];
-        const isPresent = record["Có mặt"] === true || record["Có mặt"] === "true";
-        const isExcused = record["Vắng có phép"] === true || record["Vắng có phép"] === "true";
-        
-        // Include if student is present (Có mặt) or has excused absence (Vắng có phép)
-        if (!studentId) {
-          console.log(`⚠️ Session ${session.id}: Missing Student ID in record`, record);
-          return;
-        }
-        
-        if (!isPresent && !isExcused) {
-          console.log(`⚠️ Session ${session.id}: Student ${studentId} not present and not excused`);
-          return;
-        }
-        
-        console.log(`✅ Processing invoice for student ${studentId} in session ${session.id} (Present: ${isPresent}, Excused: ${isExcused})`);
-
-        const key = `${studentId}-${sessionMonth}-${sessionYear}`;
-
-        // Skip if already loaded from Firebase as paid
-        if (invoicesMap[key]?.status === "paid") return;
-
-        const student = students.find((s) => String(s.id) === String(studentId));
-        if (!student) {
-          console.warn(`Student not found: ${studentId} in session ${session.id}`);
-          return;
-        }
-
-        // Find class info using Class ID from session
-        const classId = session["Class ID"];
+        // Get subject from class info
+        const classId = firstSession["Class ID"];
         const classInfo = classes.find((c) => c.id === classId);
-
-        // Find course using Khối and Môn học from class info
-        // Handle both value (Mathematics) and label (Toán) formats
-        const course = classInfo
-          ? courses.find((c) => {
-              if (c.Khối !== classInfo.Khối) return false;
-              const classSubject = classInfo["Môn học"];
-              const courseSubject = c["Môn học"];
-              // Direct match
-              if (classSubject === courseSubject) return true;
-              // Try matching with subject options (label <-> value)
-              const subjectOption = subjectOptions.find(
-                (opt) =>
-                  opt.label === classSubject || opt.value === classSubject
-              );
-              if (subjectOption) {
-                return (
-                  courseSubject === subjectOption.label ||
-                  courseSubject === subjectOption.value
-                );
-              }
-              return false;
-            })
-          : undefined;
-
-        // Get price from course first, then from class, then default to 0
-        const pricePerSession = course?.Giá || classInfo?.["Học phí mỗi buổi"] || 0;
-
-        // Only create invoice if there's a price (skip if price is 0)
-        if (pricePerSession === 0) {
-          console.warn(`No price found for student ${student["Họ và tên"]} (${studentId}) in session ${session.id}. Class: ${classInfo?.["Mã lớp"]}, Course: ${course?.id || "N/A"}`);
-          return;
-        }
-
-        if (!invoicesMap[key]) {
-          const invoiceData = studentInvoiceStatus[key];
-          const discount =
-            typeof invoiceData === "object" && invoiceData !== null
-              ? invoiceData.discount || 0
-              : 0;
-          const status =
-            typeof invoiceData === "string"
-              ? invoiceData
-              : typeof invoiceData === "object" && invoiceData !== null
-                ? invoiceData.status || "unpaid"
-                : "unpaid";
-
-          // Ensure status is either "paid" or "unpaid"
-          const finalStatus = status === "paid" ? "paid" : "unpaid";
-
-          invoicesMap[key] = {
-            id: key,
-            studentId,
-            studentName: student["Họ và tên"] || "",
-            studentCode: student["Mã học sinh"] || "",
-            month: sessionMonth,
-            year: sessionYear,
-            totalSessions: 0,
-            totalAmount: 0,
-            discount: discount,
-            finalAmount: 0,
-            status: finalStatus,
-            sessions: [],
-          };
-        }
-
-        // Check if there's a custom price saved for this session
-        const invoiceData = studentInvoiceStatus[key];
-        const savedSessionPrices = typeof invoiceData === "object" && invoiceData !== null 
-          ? invoiceData.sessionPrices 
-          : null;
-        const sessionPrice = savedSessionPrices && savedSessionPrices[session.id] !== undefined
-          ? savedSessionPrices[session.id]
-          : pricePerSession;
-
-        invoicesMap[key].totalSessions++;
-        invoicesMap[key].totalAmount += sessionPrice;
-        invoicesMap[key].sessions.push(session);
-        
-        if (invoicesMap[key].totalSessions === 1) {
-          invoicesCreated++;
-        }
-      });
-    });
-    
-    // Also process timetable entries (Thời_khoá_biểu) - these are custom schedule changes
-    // that should also be counted as attended sessions
-    console.log(`🔍 Processing timetable entries: ${timetableEntries.length}`);
-    let timetableProcessed = 0;
-    
-    timetableEntries.forEach((entry) => {
-      if (!entry["Ngày"]) return;
-      
-      const entryDate = new Date(entry["Ngày"]);
-      if (isNaN(entryDate.getTime())) return;
-      
-      const entryMonth = entryDate.getMonth();
-      const entryYear = entryDate.getFullYear();
-      
-      // Only process entries in the selected month/year
-      if (entryMonth !== studentMonth || entryYear !== studentYear) {
-        return;
-      }
-      
-      timetableProcessed++;
-      
-      // Check if this date/class already has an attendance session
-      // If yes, skip to avoid double counting
-      const classId = entry["Class ID"];
-      const hasAttendanceSession = sessions.some((s) => {
-        if (s["Class ID"] !== classId) return false;
-        if (!s["Ngày"]) return false;
-        const sessionDate = new Date(s["Ngày"]);
-        if (isNaN(sessionDate.getTime())) return false;
-        return sessionDate.toDateString() === entryDate.toDateString();
-      });
-      
-      if (hasAttendanceSession) {
-        console.log(`⏭️ Skipping timetable entry ${entry.id} - already has attendance session`);
-        return;
-      }
-      
-      // Find class info
-      const classInfo = classes.find((c) => c.id === classId);
-      if (!classInfo) {
-        console.log(`⚠️ Timetable entry ${entry.id}: Class not found: ${classId}`);
-        return;
-      }
-      
-      // Get all students in this class - use "Student IDs" field
-      const classStudentIds = classInfo["Student IDs"] || [];
-      if (!Array.isArray(classStudentIds) || classStudentIds.length === 0) {
-        console.log(`⚠️ Timetable entry ${entry.id}: No students in class`);
-        return;
-      }
-      
-      // Find course to get price
-      const course = classInfo
-        ? courses.find((c) => {
+        if (classInfo) {
+          subject = classInfo["Môn học"] || "";
+          
+          // Get price from course
+          const course = courses.find((c) => {
             if (c.Khối !== classInfo.Khối) return false;
             const classSubject = classInfo["Môn học"];
             const courseSubject = c["Môn học"];
             if (classSubject === courseSubject) return true;
             const subjectOption = subjectOptions.find(
-              (opt) =>
-                opt.label === classSubject || opt.value === classSubject
+              (opt) => opt.label === classSubject || opt.value === classSubject
             );
             if (subjectOption) {
-              return (
-                courseSubject === subjectOption.label ||
-                courseSubject === subjectOption.value
-              );
+              return courseSubject === subjectOption.label || courseSubject === subjectOption.value;
             }
             return false;
-          })
-        : undefined;
-      
-      const pricePerSession = course?.Giá || classInfo?.["Học phí mỗi buổi"] || 0;
-      
-      if (pricePerSession === 0) {
-        console.log(`⚠️ Timetable entry ${entry.id}: No price found`);
-        return;
+          });
+          pricePerSession = course?.Giá || classInfo?.["Học phí mỗi buổi"] || 0;
+        }
       }
-      
-      // Create a pseudo-session object for this timetable entry
-      const pseudoSession = {
-        id: `timetable-${entry.id}`,
-        "Ngày": entry["Ngày"],
-        "Giờ bắt đầu": entry["Giờ bắt đầu"] || "",
-        "Giờ kết thúc": entry["Giờ kết thúc"] || "",
-        "Mã lớp": entry["Mã lớp"] || classInfo["Mã lớp"] || "",
-        "Tên lớp": entry["Tên lớp"] || classInfo["Tên lớp"] || "",
-        "Class ID": classId,
-        "Teacher ID": classInfo["Teacher ID"] || classInfo["Giáo viên chủ nhiệm"] || "",
-        "Giáo viên": classInfo["Giáo viên chủ nhiệm"] || "",
-        isTimetableEntry: true, // Mark as timetable entry
-      };
-      
-      // Process each student in the class
-      classStudentIds.forEach((studentId: string) => {
-        if (!studentId) return;
-        
-        const key = `${studentId}-${entryMonth}-${entryYear}`;
-        
-        // Skip if already loaded from Firebase as paid
-        if (invoicesMap[key]?.status === "paid") return;
-        
-        const student = students.find((s) => String(s.id) === String(studentId));
-        if (!student) {
-          console.log(`⚠️ Timetable entry ${entry.id}: Student not found: ${studentId}`);
-          return;
-        }
-        
-        if (!invoicesMap[key]) {
-          const invoiceData = studentInvoiceStatus[key];
-          const discount =
-            typeof invoiceData === "object" && invoiceData !== null
-              ? invoiceData.discount || 0
-              : 0;
-          const status =
-            typeof invoiceData === "string"
-              ? invoiceData
-              : typeof invoiceData === "object" && invoiceData !== null
-                ? invoiceData.status || "unpaid"
-                : "unpaid";
-          
-          const finalStatus = status === "paid" ? "paid" : "unpaid";
-          
-          invoicesMap[key] = {
-            id: key,
-            studentId,
-            studentName: student["Họ và tên"] || "",
-            studentCode: student["Mã học sinh"] || "",
-            month: entryMonth,
-            year: entryYear,
-            totalSessions: 0,
-            totalAmount: 0,
-            discount: discount,
-            finalAmount: 0,
-            status: finalStatus,
-            sessions: [],
-          };
-        }
-        
-        // Check if this timetable entry is already counted for this student
-        const alreadyCounted = invoicesMap[key].sessions.some(
-          (s: any) => s.id === `timetable-${entry.id}`
-        );
-        
-        if (!alreadyCounted) {
-          // Check if there's a custom price saved for this session
-          const invoiceData = studentInvoiceStatus[key];
-          const savedSessionPrices = typeof invoiceData === "object" && invoiceData !== null 
-            ? invoiceData.sessionPrices 
-            : null;
-          const sessionPrice = savedSessionPrices && savedSessionPrices[pseudoSession.id] !== undefined
-            ? savedSessionPrices[pseudoSession.id]
-            : pricePerSession;
 
-          invoicesMap[key].totalSessions++;
-          invoicesMap[key].totalAmount += sessionPrice;
-          invoicesMap[key].sessions.push(pseudoSession);
-          
-          if (invoicesMap[key].totalSessions === 1) {
-            invoicesCreated++;
-          }
-        }
+      invoicesList.push({
+        id: key,
+        studentId: studentId,
+        studentName: invoiceData.studentName || student?.["Họ và tên"] || "",
+        studentCode: invoiceData.studentCode || student?.["Mã học sinh"] || "",
+        month: month,
+        year: year,
+        totalSessions: invoiceData.totalSessions ?? 0,
+        totalAmount: invoiceData.totalAmount ?? 0,
+        discount: invoiceData.discount ?? 0,
+        finalAmount: invoiceData.finalAmount ?? 0,
+        status: status as "paid" | "unpaid",
+        sessions: invoiceData.sessions || [],
+        invoiceImage: invoiceData.invoiceImage,
+        className,
+        classCode,
+        subject,
+        pricePerSession,
       });
     });
-    
-    console.log(`📊 Processing summary:`);
-    console.log(`  - Sessions processed: ${sessionsProcessed}`);
-    console.log(`  - Records processed: ${recordsProcessed}`);
-    console.log(`  - Timetable entries processed: ${timetableProcessed}`);
-    console.log(`  - Invoices created: ${invoicesCreated}`);
 
-    // Calculate final amount for unpaid invoices only
-    Object.values(invoicesMap).forEach((invoice) => {
-      if (invoice.status !== "paid") {
-        const finalAmount = Math.max(0, invoice.totalAmount - invoice.discount);
-        invoice.finalAmount = finalAmount;
-      } else {
-        // For paid invoices, use the saved finalAmount from Firebase
-        invoice.finalAmount = invoice.finalAmount || invoice.totalAmount - invoice.discount;
-      }
-    });
-
-    const result = Object.values(invoicesMap);
-    console.log(`📊 Total invoices calculated: ${result.length}`);
-    console.log(`📊 Unpaid invoices: ${result.filter(i => i.status !== "paid").length}`);
-    console.log(`📊 Paid invoices: ${result.filter(i => i.status === "paid").length}`);
-    console.log(`📊 Invoice details:`, result.map(i => ({
-      id: i.id,
-      student: i.studentName,
-      status: i.status,
-      sessions: i.totalSessions,
-      amount: i.totalAmount
-    })));
+    console.log(`📊 Total invoices loaded from Firebase: ${invoicesList.length}`);
+    console.log(`📊 Unpaid: ${invoicesList.filter(i => i.status !== "paid").length}`);
+    console.log(`📊 Paid: ${invoicesList.filter(i => i.status === "paid").length}`);
     
-    return result;
+    return invoicesList;
   }, [
-    sessions,
+    studentInvoiceStatus,
     students,
-    courses,
     classes,
-    timetableEntries,
+    courses,
     studentMonth,
     studentYear,
-    studentInvoiceStatus,
     refreshTrigger,
   ]);
 
@@ -932,6 +642,40 @@ const InvoicePage = () => {
     return unpaidInvoices;
   }, [studentInvoices, studentSearchTerm, studentMonth, studentYear]);
 
+  // Group unpaid invoices by student
+  const groupedStudentInvoices = useMemo(() => {
+    const groupMap = new Map<string, GroupedStudentInvoice>();
+
+    filteredStudentInvoices.forEach((invoice) => {
+      const key = invoice.studentId;
+      
+      if (!groupMap.has(key)) {
+        groupMap.set(key, {
+          studentId: invoice.studentId,
+          studentName: invoice.studentName,
+          studentCode: invoice.studentCode,
+          month: invoice.month,
+          year: invoice.year,
+          invoices: [],
+          totalSessions: 0,
+          totalAmount: 0,
+          discount: 0,
+          finalAmount: 0,
+          status: "unpaid",
+        });
+      }
+
+      const group = groupMap.get(key)!;
+      group.invoices.push(invoice);
+      group.totalSessions += invoice.totalSessions;
+      group.totalAmount += invoice.totalAmount;
+      group.discount += invoice.discount;
+      group.finalAmount += invoice.finalAmount;
+    });
+
+    return Array.from(groupMap.values());
+  }, [filteredStudentInvoices]);
+
   // Filter paid student invoices (for paid tab)
   const filteredPaidStudentInvoices = useMemo(() => {
     return studentInvoices.filter((invoice) => {
@@ -979,31 +723,42 @@ const InvoicePage = () => {
     teacherStatusFilter,
   ]);
 
-  // Delete student invoices (bulk delete - unpaid tab)
+  // Delete student invoices (bulk delete - unpaid tab) - removed, use individual delete instead
   const handleDeleteMultipleInvoices = async () => {
     if (selectedRowKeys.length === 0) {
       message.warning("Vui lòng chọn ít nhất một phiếu thu để xóa");
       return;
     }
 
+    // selectedRowKeys ở tab chưa thanh toán là studentId (do bảng group theo học sinh)
+    const groupedByStudent = new Map(groupedStudentInvoices.map((g) => [g.studentId, g]));
+
     Modal.confirm({
       title: "Xác nhận xóa",
-      content: `Bạn có chắc chắn muốn xóa ${selectedRowKeys.length} phiếu thu đã chọn?`,
+      content: `Bạn có chắc chắn muốn xóa ${selectedRowKeys.length} phiếu thu đã chọn? Dữ liệu sẽ bị xóa vĩnh viễn.`,
       okText: "Xóa",
       cancelText: "Hủy",
       okType: "danger",
       onOk: async () => {
         try {
-          const deletePromises = selectedRowKeys.map(async (invoiceId) => {
-            const invoiceRef = ref(
-              database,
-              `datasheet/Phiếu_thu_học_phí/${invoiceId}`
-            );
-            await remove(invoiceRef);
+          const deletePromises: Promise<void>[] = [];
+          let totalDeleted = 0;
+
+          selectedRowKeys.forEach((studentIdKey) => {
+            const group = groupedByStudent.get(String(studentIdKey));
+            if (!group) return;
+            group.invoices.forEach((invoice) => {
+              const invoiceRef = ref(
+                database,
+                `datasheet/Phiếu_thu_học_phí/${invoice.id}`
+              );
+              deletePromises.push(remove(invoiceRef));
+              totalDeleted += 1;
+            });
           });
 
           await Promise.all(deletePromises);
-          message.success(`Đã xóa ${selectedRowKeys.length} phiếu thu`);
+          message.success(`Đã xóa ${totalDeleted} phiếu thu`);
           setSelectedRowKeys([]);
           setRefreshTrigger((prev) => prev + 1);
         } catch (error) {
@@ -1023,17 +778,19 @@ const InvoicePage = () => {
 
     Modal.confirm({
       title: "Xác nhận xóa",
-      content: `Bạn có chắc chắn muốn xóa ${selectedPaidRowKeys.length} phiếu thu đã thanh toán đã chọn?`,
+      content: `Bạn có chắc chắn muốn xóa ${selectedPaidRowKeys.length} phiếu thu đã thanh toán đã chọn? Dữ liệu sẽ bị xóa vĩnh viễn.`,
       okText: "Xóa",
       cancelText: "Hủy",
       okType: "danger",
       onOk: async () => {
         try {
           const deletePromises = selectedPaidRowKeys.map(async (invoiceId) => {
+            const invoiceIdStr = String(invoiceId);
             const invoiceRef = ref(
               database,
-              `datasheet/Phiếu_thu_học_phí/${invoiceId}`
+              `datasheet/Phiếu_thu_học_phí/${invoiceIdStr}`
             );
+            // Permanently delete
             await remove(invoiceRef);
           });
 
@@ -1049,29 +806,21 @@ const InvoicePage = () => {
     });
   };
 
-  // Delete single invoice
+  // Delete single invoice - permanently remove from database
   const handleDeleteInvoice = async (invoiceId: string) => {
-    Modal.confirm({
-      title: "Xác nhận xóa",
-      content: "Bạn có chắc chắn muốn xóa phiếu thu này?",
-      okText: "Xóa",
-      cancelText: "Hủy",
-      okType: "danger",
-      onOk: async () => {
-        try {
-          const invoiceRef = ref(
-            database,
-            `datasheet/Phiếu_thu_học_phí/${invoiceId}`
-          );
-          await remove(invoiceRef);
-          message.success("Đã xóa phiếu thu");
-          setRefreshTrigger((prev) => prev + 1);
-        } catch (error) {
-          console.error("Error deleting invoice:", error);
-          message.error("Lỗi khi xóa phiếu thu");
-        }
-      },
-    });
+    try {
+      const invoiceRef = ref(
+        database,
+        `datasheet/Phiếu_thu_học_phí/${invoiceId}`
+      );
+      // Permanently delete the invoice from Firebase
+      await remove(invoiceRef);
+      message.success("Đã xóa phiếu thu");
+      setRefreshTrigger((prev) => prev + 1);
+    } catch (error) {
+      console.error("Error deleting invoice:", error);
+      message.error("Lỗi khi xóa phiếu thu");
+    }
   };
 
   // Update payment status
@@ -1101,12 +850,10 @@ const InvoicePage = () => {
             database,
             `datasheet/Phiếu_thu_học_phí/${invoiceId}`
           );
-          const currentData = studentInvoiceStatus[invoiceId] || {};
 
           // When marking as paid, save complete invoice data
           if (status === "paid") {
             await update(invoiceRef, {
-              ...currentData,
               status,
               studentId: invoice.studentId,
               studentName: invoice.studentName,
@@ -1119,18 +866,15 @@ const InvoicePage = () => {
               finalAmount: invoice.finalAmount,
               paidAt: new Date().toISOString(),
               sessions: invoice.sessions.map((s) => ({
-                id: s.id,
                 Ngày: s["Ngày"],
-                "Giờ bắt đầu": s["Giờ bắt đầu"],
-                "Giờ kết thúc": s["Giờ kết thúc"],
                 "Tên lớp": s["Tên lớp"],
                 "Mã lớp": s["Mã lớp"],
+                "Class ID": s["Class ID"],
               })),
             });
           } else {
             // Only allow unpaid if not yet marked as paid
             await update(invoiceRef, {
-              ...currentData,
               status,
             });
           }
@@ -1227,18 +971,27 @@ const InvoicePage = () => {
         return;
       }
 
+      // Find the invoice to get totalAmount
+      const invoice = studentInvoices.find((inv) => inv.id === invoiceId);
+      if (!invoice) {
+        message.error("Không tìm thấy thông tin phiếu thu");
+        return;
+      }
+
+      // Calculate new finalAmount
+      const finalAmount = Math.max(0, invoice.totalAmount - discount);
+
       const invoiceRef = ref(
         database,
         `datasheet/Phiếu_thu_học_phí/${invoiceId}`
       );
       const updateData =
         typeof currentData === "object"
-          ? { ...currentData, discount }
-          : { status: currentStatus || "unpaid", discount };
+          ? { ...currentData, discount, finalAmount }
+          : { status: currentStatus || "unpaid", discount, finalAmount };
 
       await update(invoiceRef, updateData);
-      message.success("Đã cập nhật miễn giảm học phí");
-
+      
       // Trigger recalculation of table
       setRefreshTrigger((prev) => prev + 1);
     } catch (error) {
@@ -1713,9 +1466,10 @@ const InvoicePage = () => {
               ${currentMonthHtml}
               ${debtDetailsHtml}
               <div style="margin:16px 0; padding:10px 14px; border:2px solid #c40000; border-radius:8px;">
-                <p style="margin:0; color:#c40000; font-size:15px; font-weight:700; text-align:center;">TỔNG PHẢI THU (Nợ trước + Tháng ${invoice.month + 1})</p>
-                <p style="margin:4px 0 0 0; color:#c40000; font-size:22px; font-weight:700; text-align:center;">${combinedTotalDue.toLocaleString("vi-VN")} đ</p>
+                <p style="margin:0; color:#c40000; font-size:15px; font-weight:700; text-align:center;">TỔNG PHẢI THU THÁNG ${invoice.month + 1}</p>
+                <p style="margin:4px 0 0 0; color:#c40000; font-size:22px; font-weight:700; text-align:center;">${invoice.finalAmount.toLocaleString("vi-VN")} đ</p>
               </div>
+              ${totalDebt > 0 ? `<p style="margin-top: 12px; color: #ff4d4f;"><strong>Nợ các tháng trước:</strong> ${totalDebt.toLocaleString("vi-VN")} đ</p>` : ""}
               <p style="margin-top: 12px;"><strong>Ghi chú:</strong> ${(invoice as any).note || ""}</p>
 
               <div style="margin-top: 18px; font-size: 13px; color: #222; line-height: 1.4;">
@@ -2227,8 +1981,8 @@ const InvoicePage = () => {
     }
   };
 
-  // Student invoice columns - Memoized to prevent recreation
-  const studentColumns = useMemo(
+  // Student invoice columns (grouped by student) - for unpaid tab
+  const groupedStudentColumns = useMemo(
     () => [
       {
         title: "Mã HS",
@@ -2263,12 +2017,168 @@ const InvoicePage = () => {
       {
         title: "Miễn giảm",
         key: "discount",
+        width: 150,
+        render: (_: any, record: GroupedStudentInvoice) => {
+          // Show grouped discount input (editable for all invoices in this student)
+          return (
+            <InputNumber
+              value={record.discount}
+              min={0}
+              max={record.totalAmount}
+              onChange={(value) => {
+                const discount = value || 0;
+                // Update all invoices for this student with the same discount
+                record.invoices.forEach((invoice) => {
+                  updateStudentDiscount(invoice.id, discount);
+                });
+              }}
+              onBlur={() => {
+                // Trigger refresh after blur
+                setRefreshTrigger((prev) => prev + 1);
+              }}
+              style={{ width: "100%" }}
+              size="small"
+              placeholder="0"
+            />
+          );
+        },
+      },
+      {
+        title: "Thành tiền",
+        key: "finalAmount",
+        width: 130,
+        render: (_: any, record: GroupedStudentInvoice) => (
+          <Text strong style={{ color: "#1890ff", fontSize: "14px" }}>
+            {record.finalAmount.toLocaleString("vi-VN")} đ
+          </Text>
+        ),
+      },
+      {
+        title: "Trạng thái",
+        dataIndex: "status",
+        key: "status",
+        width: 120,
+        render: (status: "paid" | "unpaid") => (
+          <Tag color={status === "paid" ? "green" : "red"}>
+            {status === "paid" ? "Đã thu" : "Chưa thu"}
+          </Tag>
+        ),
+      },
+      {
+        title: "Thao tác",
+        key: "actions",
         width: 200,
-        render: (_: any, record: StudentInvoice) => (
-          <DiscountInput
-            record={record}
-            updateStudentDiscount={updateStudentDiscount}
-          />
+        render: (_: any, record: GroupedStudentInvoice) => {
+          const firstInvoice = record.invoices[0];
+          return (
+            <Space>
+              <Button
+                size="small"
+                icon={<EyeOutlined />}
+                onClick={() => viewStudentInvoice(firstInvoice)}
+              >
+                Xem
+              </Button>
+              <Button
+                size="small"
+                type="primary"
+                icon={<CheckCircleOutlined />}
+                onClick={() => {
+                  // Mark all invoices for this student as paid
+                  record.invoices.forEach((invoice) => {
+                    updateStudentInvoiceStatus(invoice.id, "paid");
+                  });
+                }}
+              >
+                Xác nhận TT
+              </Button>
+              <Popconfirm
+                title="Xác nhận xóa"
+                description="Bạn có chắc chắn muốn xóa tất cả phiếu thu của học sinh này? Dữ liệu sẽ bị xóa vĩnh viễn."
+                onConfirm={() => {
+                  // Delete all invoices for this student
+                  record.invoices.forEach((invoice) => {
+                    handleDeleteInvoice(invoice.id);
+                  });
+                }}
+                okText="Xóa"
+                cancelText="Hủy"
+                okType="danger"
+              >
+                <Button
+                  size="small"
+                  danger
+                  icon={<DeleteOutlined />}
+                >
+                  Xóa
+                </Button>
+              </Popconfirm>
+            </Space>
+          );
+        },
+      },
+    ],
+    [viewStudentInvoice, updateStudentDiscount, updateStudentInvoiceStatus, handleDeleteInvoice]
+  );
+
+  // Paid student invoice columns (flat, not grouped)
+  const paidStudentColumns = useMemo(
+    () => [
+      {
+        title: "Mã HS",
+        dataIndex: "studentCode",
+        key: "studentCode",
+        width: 100,
+      },
+      {
+        title: "Họ tên",
+        dataIndex: "studentName",
+        key: "studentName",
+        width: 200,
+      },
+      {
+        title: "Tên lớp",
+        dataIndex: "className",
+        key: "className",
+        width: 150,
+      },
+      {
+        title: "Mã lớp",
+        dataIndex: "classCode",
+        key: "classCode",
+        width: 100,
+      },
+      {
+        title: "Môn học",
+        dataIndex: "subject",
+        key: "subject",
+        width: 120,
+      },
+      {
+        title: "Số buổi",
+        dataIndex: "totalSessions",
+        key: "totalSessions",
+        width: 100,
+        align: "center" as const,
+      },
+      {
+        title: "Tổng tiền",
+        dataIndex: "totalAmount",
+        key: "totalAmount",
+        width: 130,
+        render: (amount: number) => (
+          <Text style={{ color: "#36797f" }}>
+            {amount.toLocaleString("vi-VN")} đ
+          </Text>
+        ),
+      },
+      {
+        title: "Miễn giảm",
+        dataIndex: "discount",
+        key: "discount",
+        width: 130,
+        render: (discount: number) => (
+          <Text>{discount.toLocaleString("vi-VN")} đ</Text>
         ),
       },
       {
@@ -2276,58 +2186,10 @@ const InvoicePage = () => {
         key: "finalAmount",
         width: 130,
         render: (_: any, record: StudentInvoice) => (
-          <Text strong style={{ color: "#1890ff", fontSize: "14px" }}>
+          <Text strong style={{ color: "#52c41a", fontSize: "14px" }}>
             {record.finalAmount.toLocaleString("vi-VN")} đ
           </Text>
         ),
-      },
-      {
-        title: "Hóa đơn",
-        key: "invoiceImage",
-        width: 120,
-        align: "center" as const,
-        render: (_: any, record: StudentInvoice) => {
-          const invoiceData = studentInvoiceStatus[record.id];
-          const hasImage =
-            invoiceData &&
-            typeof invoiceData === "object" &&
-            "invoiceImage" in invoiceData &&
-            invoiceData.invoiceImage;
-
-          return (
-            <Space direction="vertical" size="small">
-              {hasImage ? (
-                <Button
-                  size="small"
-                  icon={<EyeOutlined />}
-                  onClick={() => {
-                    if (
-                      typeof invoiceData === "object" &&
-                      "invoiceImage" in invoiceData
-                    ) {
-                      setPreviewImage(invoiceData.invoiceImage as string);
-                      setPreviewOpen(true);
-                    }
-                  }}
-                >
-                  Xem
-                </Button>
-              ) : (
-                <Upload
-                  accept="image/*"
-                  showUploadList={false}
-                  beforeUpload={(file) =>
-                    handleStudentImageUpload(file, record.id)
-                  }
-                >
-                  <Button size="small" icon={<FileImageOutlined />}>
-                    Tải lên
-                  </Button>
-                </Upload>
-              )}
-            </Space>
-          );
-        },
       },
       {
         title: "Trạng thái",
@@ -2353,46 +2215,6 @@ const InvoicePage = () => {
             >
               Xem
             </Button>
-            <Button
-              size="small"
-              icon={<EditOutlined />}
-              onClick={() => {
-                if (record.status === "paid") {
-                  message.warning("Không thể chỉnh sửa phiếu đã thanh toán");
-                  return;
-                }
-                setEditingInvoice(record);
-                setEditDiscount(record.discount || 0);
-                
-                // Initialize session prices from saved data or calculate from default
-                const invoiceData = studentInvoiceStatus[record.id];
-                const savedSessionPrices = typeof invoiceData === "object" ? invoiceData.sessionPrices : null;
-                
-                const initialPrices: { [sessionId: string]: number } = {};
-                record.sessions.forEach((session: AttendanceSession) => {
-                  if (savedSessionPrices && savedSessionPrices[session.id] !== undefined) {
-                    initialPrices[session.id] = savedSessionPrices[session.id];
-                  } else {
-                    initialPrices[session.id] = getSessionPrice(session);
-                  }
-                });
-                setEditSessionPrices(initialPrices);
-                setEditInvoiceModalOpen(true);
-              }}
-              disabled={record.status === "paid"}
-            >
-              Sửa
-            </Button>
-            {record.status !== "paid" && (
-              <Button
-                size="small"
-                type="primary"
-                icon={<CheckCircleOutlined />}
-                onClick={() => updateStudentInvoiceStatus(record.id, "paid")}
-              >
-                Xác nhận TT
-              </Button>
-            )}
             <Popconfirm
               title="Xác nhận xóa"
               description="Bạn có chắc chắn muốn xóa phiếu thu này?"
@@ -2413,13 +2235,94 @@ const InvoicePage = () => {
         ),
       },
     ],
-    [
-      updateStudentDiscount,
-      viewStudentInvoice,
-      updateStudentInvoiceStatus,
-      studentInvoiceStatus,
-    ]
+    [viewStudentInvoice, handleDeleteInvoice]
   );
+
+  // Columns for expanded row (class details)
+  const expandedStudentColumns = [
+    {
+      title: "Tên lớp",
+      dataIndex: "className",
+      key: "className",
+      width: 150,
+    },
+    {
+      title: "Mã lớp",
+      dataIndex: "classCode",
+      key: "classCode",
+      width: 100,
+    },
+    {
+      title: "Môn học",
+      dataIndex: "subject",
+      key: "subject",
+      width: 120,
+    },
+    {
+      title: "Số buổi",
+      dataIndex: "totalSessions",
+      key: "totalSessions",
+      width: 80,
+      align: "center" as const,
+    },
+    {
+      title: "Giá/buổi",
+      dataIndex: "pricePerSession",
+      key: "pricePerSession",
+      width: 120,
+      render: (price: number) => (
+        <Text>{price.toLocaleString("vi-VN")} đ</Text>
+      ),
+    },
+    {
+      title: "Tổng tiền",
+      dataIndex: "totalAmount",
+      key: "totalAmount",
+      width: 130,
+      render: (amount: number) => (
+        <Text style={{ color: "#36797f" }}>
+          {amount.toLocaleString("vi-VN")} đ
+        </Text>
+      ),
+    },
+    {
+      title: "Miễn giảm",
+      dataIndex: "discount",
+      key: "discount",
+      width: 150,
+      render: (discount: number) => (
+        <Text>{discount.toLocaleString("vi-VN")} đ</Text>
+      ),
+    },
+    {
+      title: "Thành tiền",
+      key: "finalAmount",
+      width: 130,
+      render: (_: any, record: StudentInvoice) => (
+        <Text strong style={{ color: "#1890ff", fontSize: "14px" }}>
+          {record.finalAmount.toLocaleString("vi-VN")} đ
+        </Text>
+      ),
+    },
+  ];
+
+  // Expandable row render for grouped student invoices
+  const expandedStudentRowRender = (record: GroupedStudentInvoice) => {
+    // If only 1 invoice, no need to expand
+    if (record.invoices.length <= 1) {
+      return null;
+    }
+
+    return (
+      <Table
+        columns={expandedStudentColumns}
+        dataSource={record.invoices}
+        pagination={false}
+        rowKey="id"
+        size="small"
+      />
+    );
+  };
 
   // Expandable row render for teacher salary details
   const expandedTeacherRowRender = (record: TeacherSalary) => {
@@ -2778,9 +2681,9 @@ const InvoicePage = () => {
       <Row gutter={16} className="mb-4">
         <Col span={8}>
           <Card>
-            <Text type="secondary">Tổng phiếu thu</Text>
+            <Text type="secondary">Tổng học sinh</Text>
             <Title level={3} style={{ margin: "10px 0", color: "#36797f" }}>
-              {filteredStudentInvoices.length}
+              {groupedStudentInvoices.length}
             </Title>
           </Card>
         </Col>
@@ -2788,7 +2691,7 @@ const InvoicePage = () => {
           <Card>
             <Text type="secondary">Tổng thu</Text>
             <Title level={3} style={{ margin: "10px 0", color: "#36797f" }}>
-              {filteredStudentInvoices
+              {groupedStudentInvoices
                 .reduce((sum, i) => sum + i.finalAmount, 0)
                 .toLocaleString("vi-VN")}{" "}
               đ
@@ -2813,20 +2716,20 @@ const InvoicePage = () => {
 
       {/* Table */}
       <Table
-        columns={studentColumns}
-        dataSource={filteredStudentInvoices}
+        columns={groupedStudentColumns}
+        dataSource={groupedStudentInvoices}
         loading={loading}
-        rowKey="id"
+        rowKey="studentId"
         pagination={{ pageSize: 10, showSizeChanger: false }}
         rowSelection={{
-          selectedRowKeys,
+          selectedRowKeys: selectedRowKeys,
           onChange: (newSelectedRowKeys) => {
             setSelectedRowKeys(newSelectedRowKeys);
           },
         }}
         expandable={{
-          expandedRowRender,
-          rowExpandable: (record) => record.sessions.length > 0,
+          expandedRowRender: expandedStudentRowRender,
+          rowExpandable: (record) => record.invoices.length > 1,
         }}
       />
     </Space>
@@ -2907,45 +2810,7 @@ const InvoicePage = () => {
 
       {/* Table - Read only, no print button and no edit */}
       <Table
-        columns={studentColumns.map((col) => {
-          // Remove invoiceImage column and modify actions column for paid invoices
-          if (col.key === "invoiceImage") {
-            return null;
-          }
-          if (col.key === "actions") {
-            return {
-              ...col,
-              render: (_: any, record: StudentInvoice) => (
-                <Space>
-                  <Button
-                    size="small"
-                    icon={<EyeOutlined />}
-                    onClick={() => viewStudentInvoice(record)}
-                  >
-                    Xem
-                  </Button>
-                  <Popconfirm
-                    title="Xác nhận xóa"
-                    description="Bạn có chắc chắn muốn xóa phiếu thu này?"
-                    onConfirm={() => handleDeleteInvoice(record.id)}
-                    okText="Xóa"
-                    cancelText="Hủy"
-                    okType="danger"
-                  >
-                    <Button
-                      size="small"
-                      danger
-                      icon={<DeleteOutlined />}
-                    >
-                      Xóa
-                    </Button>
-                  </Popconfirm>
-                </Space>
-              ),
-            };
-          }
-          return col;
-        }).filter(Boolean)}
+        columns={paidStudentColumns}
         dataSource={filteredPaidStudentInvoices}
         loading={loading}
         rowKey="id"
