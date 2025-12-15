@@ -102,6 +102,15 @@ const AttendanceSessionPage = () => {
     field: "Giờ check-in" | "Giờ check-out";
   } | null>(null);
 
+  // State cho TimePicker Modal
+  const [timeModalOpen, setTimeModalOpen] = useState(false);
+  const [selectedTimeData, setSelectedTimeData] = useState<{
+    studentId: string;
+    field: "Giờ check-in" | "Giờ check-out";
+    currentTime: string;
+  } | null>(null);
+  const [tempTime, setTempTime] = useState<any>(null);
+
   // Load custom schedule from Thời_khoá_biểu
   useEffect(() => {
     if (!classData?.id || !sessionDate) return;
@@ -257,6 +266,29 @@ const AttendanceSessionPage = () => {
   const handleRemoveAttachment = (index: number) => {
     setHomeworkAttachments(prev => prev.filter((_, i) => i !== index));
     message.info("Đã xóa tài liệu");
+  };
+
+  // Handle open time picker modal
+  const handleOpenTimeModal = (studentId: string, field: "Giờ check-in" | "Giờ check-out", currentTime: string) => {
+    setSelectedTimeData({ studentId, field, currentTime });
+    setTempTime(currentTime ? dayjs(currentTime, "HH:mm:ss") : null);
+    setTimeModalOpen(true);
+  };
+
+  // Handle close time picker modal
+  const handleCloseTimeModal = () => {
+    setTimeModalOpen(false);
+    setSelectedTimeData(null);
+    setTempTime(null);
+  };
+
+  // Handle confirm time selection
+  const handleConfirmTime = () => {
+    if (!selectedTimeData) return;
+    
+    const newTime = tempTime ? tempTime.format("HH:mm:ss") : "";
+    handleUpdateCheckTime(selectedTimeData.studentId, selectedTimeData.field, newTime);
+    handleCloseTimeModal();
   };
 
   // Bug 13: Handle update check time
@@ -1060,23 +1092,23 @@ const AttendanceSessionPage = () => {
         );
         if (!attendanceRecord?.["Có mặt"]) return "-";
         
-        const isEditing = editingCheckTime?.studentId === record.id && editingCheckTime?.field === "Giờ check-in";
-        
-        if (isEditing) {
+        // When in edit mode, show clickable tag to open modal
+        if (isEditingMode && !isReadOnly) {
           return (
-            <TimePicker
-              format="HH:mm:ss"
-              defaultValue={attendanceRecord["Giờ check-in"] ? dayjs(attendanceRecord["Giờ check-in"]) : undefined}
-              onChange={(time) => {
-                if (time) {
-                  handleUpdateCheckTime(record.id, "Giờ check-in", time.format("HH:mm:ss"));
-                }
-              }}
-              onBlur={() => setEditingCheckTime(null)}
-              autoFocus
+            <Button
+              type="text"
               size="small"
-              style={{ width: 120 }}
-            />
+              onClick={() => handleOpenTimeModal(record.id, "Giờ check-in", attendanceRecord["Giờ check-in"] || "")}
+              style={{ padding: 0 }}
+            >
+              {attendanceRecord?.["Giờ check-in"] ? (
+                <Tag icon={<LoginOutlined />} color="success" style={{ cursor: "pointer" }}>
+                  {attendanceRecord["Giờ check-in"]}
+                </Tag>
+              ) : (
+                <Tag color="default" style={{ cursor: "pointer" }}>Chưa check-in</Tag>
+              )}
+            </Button>
           );
         }
         
@@ -1085,7 +1117,7 @@ const AttendanceSessionPage = () => {
             icon={<LoginOutlined />} 
             color="success"
             style={{ cursor: isReadOnly ? "default" : "pointer" }}
-            onClick={() => !isReadOnly && setEditingCheckTime({ studentId: record.id, field: "Giờ check-in" })}
+            onClick={() => !isReadOnly && handleOpenTimeModal(record.id, "Giờ check-in", attendanceRecord["Giờ check-in"] || "")}
           >
             {attendanceRecord["Giờ check-in"]}
           </Tag>
@@ -1104,23 +1136,29 @@ const AttendanceSessionPage = () => {
         );
         if (!attendanceRecord?.["Có mặt"] || !attendanceRecord?.["Giờ check-in"]) return "-";
         
-        const isEditing = editingCheckTime?.studentId === record.id && editingCheckTime?.field === "Giờ check-out";
-        
-        if (isEditing) {
+        // When in edit mode, show clickable tag to open modal
+        if (isEditingMode && !isReadOnly) {
           return (
-            <TimePicker
-              format="HH:mm:ss"
-              defaultValue={attendanceRecord["Giờ check-out"] ? dayjs(attendanceRecord["Giờ check-out"]) : undefined}
-              onChange={(time) => {
-                if (time) {
-                  handleUpdateCheckTime(record.id, "Giờ check-out", time.format("HH:mm:ss"));
-                }
-              }}
-              onBlur={() => setEditingCheckTime(null)}
-              autoFocus
+            <Button
+              type="text"
               size="small"
-              style={{ width: 120 }}
-            />
+              onClick={() => handleOpenTimeModal(record.id, "Giờ check-out", attendanceRecord["Giờ check-out"] || "")}
+              style={{ padding: 0 }}
+            >
+              {attendanceRecord?.["Giờ check-out"] ? (
+                <Tag icon={<LogoutOutlined />} color="warning" style={{ cursor: "pointer" }}>
+                  {attendanceRecord["Giờ check-out"]}
+                </Tag>
+              ) : (
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<LogoutOutlined />}
+                >
+                  Check-out
+                </Button>
+              )}
+            </Button>
           );
         }
         
@@ -1130,7 +1168,7 @@ const AttendanceSessionPage = () => {
               icon={<LogoutOutlined />} 
               color="warning"
               style={{ cursor: isReadOnly ? "default" : "pointer" }}
-              onClick={() => !isReadOnly && setEditingCheckTime({ studentId: record.id, field: "Giờ check-out" })}
+              onClick={() => !isReadOnly && handleOpenTimeModal(record.id, "Giờ check-out", attendanceRecord["Giờ check-out"] || "")}
             >
               {attendanceRecord["Giờ check-out"]}
             </Tag>
@@ -1217,6 +1255,26 @@ const AttendanceSessionPage = () => {
         );
         if (!attendanceRecord?.["Có mặt"]) return "-";
         
+        // When in edit mode, show clickable tag to open modal
+        if (isEditingMode && !isReadOnly) {
+          return (
+            <Button
+              type="text"
+              size="small"
+              onClick={() => handleOpenTimeModal(record.id, "Giờ check-in", attendanceRecord["Giờ check-in"] || "")}
+              style={{ padding: 0 }}
+            >
+              {attendanceRecord?.["Giờ check-in"] ? (
+                <Tag icon={<LoginOutlined />} color="success" style={{ fontSize: "11px", cursor: "pointer" }}>
+                  {attendanceRecord["Giờ check-in"]}
+                </Tag>
+              ) : (
+                <Tag color="default" style={{ fontSize: "11px", cursor: "pointer" }}>Chưa check-in</Tag>
+              )}
+            </Button>
+          );
+        }
+        
         return attendanceRecord?.["Giờ check-in"] ? (
           <Tag icon={<LoginOutlined />} color="success" style={{ fontSize: "11px" }}>
             {attendanceRecord["Giờ check-in"]}
@@ -1235,6 +1293,33 @@ const AttendanceSessionPage = () => {
           (r) => r["Student ID"] === record.id
         );
         if (!attendanceRecord?.["Có mặt"] || !attendanceRecord?.["Giờ check-in"]) return "-";
+        
+        // When in edit mode, show clickable tag to open modal
+        if (isEditingMode && !isReadOnly) {
+          return (
+            <Button
+              type="text"
+              size="small"
+              onClick={() => handleOpenTimeModal(record.id, "Giờ check-out", attendanceRecord["Giờ check-out"] || "")}
+              style={{ padding: 0 }}
+            >
+              {attendanceRecord?.["Giờ check-out"] ? (
+                <Tag icon={<LogoutOutlined />} color="warning" style={{ fontSize: "11px", cursor: "pointer" }}>
+                  {attendanceRecord["Giờ check-out"]}
+                </Tag>
+              ) : (
+                <Button
+                  size="small"
+                  type="primary"
+                  icon={<LogoutOutlined />}
+                  style={{ fontSize: "11px", padding: "0 8px", height: "24px" }}
+                >
+                  Check-out
+                </Button>
+              )}
+            </Button>
+          );
+        }
         
         if (attendanceRecord?.["Giờ check-out"]) {
           return (
@@ -1998,6 +2083,33 @@ const AttendanceSessionPage = () => {
             />
           </Form.Item>
         </Form>
+      </Modal>
+
+      {/* Time Picker Modal */}
+      <Modal
+        title={`Chọn ${selectedTimeData?.field === "Giờ check-in" ? "giờ check-in" : "giờ check-out"}`}
+        open={timeModalOpen}
+        onOk={handleConfirmTime}
+        onCancel={handleCloseTimeModal}
+        okText="Xác nhận"
+        cancelText="Hủy"
+        width={400}
+      >
+        <div style={{ textAlign: "center", padding: "20px 0" }}>
+          <TimePicker
+            format="HH:mm:ss"
+            value={tempTime}
+            onChange={(time) => setTempTime(time)}
+            size="large"
+            style={{ width: "100%" }}
+            placeholder="Chọn giờ"
+          />
+        </div>
+        {tempTime && (
+          <div style={{ marginTop: 16, textAlign: "center", color: "#1890ff", fontSize: 16, fontWeight: "bold" }}>
+            Giờ được chọn: {tempTime.format("HH:mm:ss")}
+          </div>
+        )}
       </Modal>
     </WrapperContent>
   );

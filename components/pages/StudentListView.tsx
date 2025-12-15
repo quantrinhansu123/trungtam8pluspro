@@ -1942,6 +1942,7 @@ const StudentListView: React.FC = () => {
               key: student.id,
               index: index + 1,
               name: student["Họ và tên"],
+              grade: student["Khối"] || "-",
               code: student["Mã học sinh"] || "-",
               phone: student["Số điện thoại"] || "-",
               parentPhone: student["SĐT phụ huynh"] || "-",
@@ -1967,6 +1968,13 @@ const StudentListView: React.FC = () => {
                 fixed: "left",
                 key: "name",
                 render: (text) => <strong>{text}</strong>,
+              },
+              {
+                title: "Khối",
+                dataIndex: "grade",
+                key: "grade",
+                width: 100,
+                render: (text) => text || "-",
               },
               {
                 title: "Mã học sinh",
@@ -3906,6 +3914,13 @@ const StudentTuitionTab: React.FC<{
       fixed: "left" as const,
       width: 200,
       render: (text: string) => <strong>{text}</strong>,
+    },
+    {
+      title: "Khối",
+      dataIndex: ["Khối"],
+      key: "grade",
+      width: 120,
+      render: (text: string) => text || "-",
     },
     {
       title: "Số buổi",
