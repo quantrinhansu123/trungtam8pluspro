@@ -1,6 +1,6 @@
 import WrapperContent from "@/components/WrapperContent";
 import { DATABASE_URL_BASE, database } from "@/firebase";
-import { ref, onValue, update, remove } from "firebase/database";
+import { ref, onValue, update, remove, set } from "firebase/database";
 import { subjectMap, subjectOptions } from "@/utils/selectOptions";
 import {
   Tabs,
@@ -177,6 +177,28 @@ const InvoicePage = () => {
     useState<boolean>(false);
   // State to track individual session prices when editing
   const [editSessionPrices, setEditSessionPrices] = useState<{ [sessionId: string]: number }>({});
+
+  // Helpers to handle keys that are invalid in Firebase paths (like containing '/')
+  const sanitizeKey = (key: string) => key.replace(/[.#$\/[\]]/g, "_");
+
+  const sanitizeObjectKeys = (obj: any): any => {
+    if (Array.isArray(obj)) return obj.map(sanitizeObjectKeys);
+    if (obj !== null && typeof obj === "object") {
+      return Object.entries(obj).reduce((acc: any, [k, v]) => {
+        acc[sanitizeKey(k)] = sanitizeObjectKeys(v);
+        return acc;
+      }, {});
+    }
+    return obj;
+  };
+
+  const getSafeField = (obj: any, field: string) => {
+    if (!obj) return undefined;
+    if (Object.prototype.hasOwnProperty.call(obj, field)) return obj[field];
+    const sk = sanitizeKey(field);
+    if (Object.prototype.hasOwnProperty.call(obj, sk)) return obj[sk];
+    return undefined;
+  };
 
   // Teacher salary filters
   const [teacherSearchTerm, setTeacherSearchTerm] = useState("");
@@ -920,7 +942,8 @@ const InvoicePage = () => {
   const updateStudentInvoiceWithSessionPrices = async (
     invoiceId: string,
     sessionPrices: { [sessionId: string]: number },
-    discount: number
+    discount: number,
+    updatedSessions?: AttendanceSession[]
   ) => {
     try {
       const currentData = studentInvoiceStatus[invoiceId];
@@ -932,8 +955,26 @@ const InvoicePage = () => {
         return;
       }
 
-      // Calculate new total from session prices
-      const newTotalAmount = Object.values(sessionPrices).reduce((sum, price) => sum + price, 0);
+      // Determine sessions to update: prefer provided updatedSessions, else use current invoice sessions
+      const currentInvoice = studentInvoices.find((inv) => inv.id === invoiceId);
+      if (!currentInvoice) {
+        message.error("Không tìm thấy thông tin phiếu thu");
+        return;
+      }
+
+      const sessionsToUse: AttendanceSession[] = updatedSessions && updatedSessions.length > 0
+        ? updatedSessions
+        : (currentInvoice.sessions || []).map((session: AttendanceSession) => {
+            const newPrice = sessionPrices[session.id];
+            if (newPrice !== undefined) {
+              // Store price under sanitized key to avoid invalid Firebase keys
+              return { ...session, [sanitizeKey("Giá/buổi")]: newPrice } as AttendanceSession;
+            }
+            return session;
+          });
+
+      // Calculate new total from sessionsToUse
+      const newTotalAmount = sessionsToUse.reduce((sum, s) => sum + (Number(getSafeField(s, "Giá/buổi") || 0)), 0);
       const newFinalAmount = Math.max(0, newTotalAmount - discount);
 
       const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceId}`);
@@ -941,12 +982,29 @@ const InvoicePage = () => {
       const updateData = {
         ...(typeof currentData === "object" ? currentData : { status: currentStatus || "unpaid" }),
         discount,
-        sessionPrices, // Store custom prices
+        sessions: sessionsToUse, // Update sessions array with new prices
+        sessionPrices, // Store custom prices mapping
         totalAmount: newTotalAmount,
         finalAmount: newFinalAmount,
       };
 
-      await update(invoiceRef, updateData);
+      console.log("💾 Updating invoice:", {
+        invoiceId,
+        oldTotalAmount: currentInvoice.totalAmount,
+        newTotalAmount,
+        oldDiscount: currentInvoice.discount,
+        newDiscount: discount,
+        oldFinalAmount: currentInvoice.finalAmount,
+        newFinalAmount,
+        sessionsUpdated: updatedSessions.length,
+      });
+
+      // Use set() to write the full invoice object. Using update() here
+      // can fail if any nested keys contain characters forbidden by
+      // Firebase path validation (e.g. "/", ".", "$", "[", "]", "#").
+      // Sanitize keys before writing to Firebase to avoid invalid characters
+      const safeData = sanitizeObjectKeys(updateData);
+      await set(invoiceRef, safeData);
       message.success("Đã cập nhật phiếu thu học phí");
       setRefreshTrigger((prev) => prev + 1);
     } catch (error) {
@@ -1223,16 +1281,13 @@ const InvoicePage = () => {
       const classInfo = classes.find((c) => c.id === classId);
       const subject = classInfo?.["Môn học"] || "N/A";
 
-      // Get the actual price for this session (prefer course/class price, fall back to stored invoice price/average)
-      let pricePerSession = getSessionPrice(session);
-      if (!pricePerSession) {
-        pricePerSession =
-          Number(session["Giá/buổi"]) ||
-          invoice.pricePerSession ||
-          (invoice.totalSessions > 0
-            ? invoice.totalAmount / invoice.totalSessions
-            : 0);
-      }
+      // Get the actual price for this session.
+      // Preference order: stored invoice session price (may be sanitized key) -> session/course/class default -> invoice average
+      let pricePerSession =
+        Number(getSafeField(session, "Giá/buổi")) ||
+        getSessionPrice(session) ||
+        invoice.pricePerSession ||
+        (invoice.totalSessions > 0 ? invoice.totalAmount / invoice.totalSessions : 0);
 
       const key = `${classCode}-${className}-${subject}`;
 
@@ -2091,7 +2146,7 @@ const InvoicePage = () => {
       {
         title: "Thao tác",
         key: "actions",
-        width: 200,
+        width: 250,
         render: (_: any, record: GroupedStudentInvoice) => {
           const firstInvoice = record.invoices[0];
           return (
@@ -2102,6 +2157,31 @@ const InvoicePage = () => {
                 onClick={() => viewStudentInvoice(firstInvoice)}
               >
                 Xem
+              </Button>
+              <Button
+                size="small"
+                type="primary"
+                icon={<EditOutlined />}
+                onClick={() => {
+                  setEditingInvoice(firstInvoice);
+                  // Initialize edit session prices from current data - grouped by subject
+                  const prices: Record<string, number> = {};
+                  firstInvoice.sessions?.forEach((session: AttendanceSession) => {
+                    const classId = session["Class ID"];
+                    const classData = classes.find(c => c.id === classId);
+                    const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
+                    
+                    // Only set once per subject (take first session price)
+                    if (prices[subject] === undefined) {
+                      prices[subject] = Number(getSafeField(session, "Giá/buổi")) || 0;
+                    }
+                  });
+                  setEditSessionPrices(prices);
+                  setEditDiscount(firstInvoice.discount || 0);
+                  setEditInvoiceModalOpen(true);
+                }}
+              >
+                Sửa
               </Button>
               <Button
                 size="small"
@@ -2142,7 +2222,7 @@ const InvoicePage = () => {
         },
       },
     ],
-    [viewStudentInvoice, updateStudentDiscount, updateStudentInvoiceStatus, handleDeleteInvoice]
+    [viewStudentInvoice, updateStudentDiscount, updateStudentInvoiceStatus, handleDeleteInvoice, setEditingInvoice, setEditSessionPrices, setEditDiscount, setEditInvoiceModalOpen]
   );
 
   // Paid student invoice columns (flat, not grouped)
@@ -2989,12 +3069,11 @@ const InvoicePage = () => {
         ]}
       />
 
-      {/* Image Preview Modal */}
-      {/* Edit Invoice Modal (restore) */}
+      {/* Edit Invoice Modal - Group by Subject */}
       <Modal
         title="Chỉnh sửa phiếu thu học phí"
         open={editInvoiceModalOpen}
-        width={700}
+        width={800}
         onCancel={() => {
           setEditInvoiceModalOpen(false);
           setEditingInvoice(null);
@@ -3003,11 +3082,40 @@ const InvoicePage = () => {
         }}
         onOk={async () => {
           if (!editingInvoice) return;
+
+          // Build updated sessions array where each session in the invoice
+          // gets the price defined by its subject in editSessionPrices.
+          // Also build a sessionPrices map keyed by session.id when available,
+          // otherwise keyed by an index token so we can still compute totals.
+          const sessionBasedPrices: Record<string, number> = {};
+          const updatedSessions: AttendanceSession[] = [];
+
+          editingInvoice.sessions.forEach((session: AttendanceSession, idx: number) => {
+            const classId = session["Class ID"];
+            const classData = classes.find(c => c.id === classId);
+            const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
+
+            const priceForSubject = editSessionPrices[subject];
+            const newPrice = priceForSubject !== undefined ? priceForSubject : (getSafeField(session, "Giá/buổi") || 0);
+
+            // Clone session and set new price
+            const updated = {
+              ...session,
+              [sanitizeKey("Giá/buổi")]: newPrice,
+            } as AttendanceSession;
+            updatedSessions.push(updated);
+
+            const key = session.id || `__idx_${idx}`;
+            sessionBasedPrices[key] = newPrice;
+          });
+
           await updateStudentInvoiceWithSessionPrices(
             editingInvoice.id,
-            editSessionPrices,
-            editDiscount
+            sessionBasedPrices,
+            editDiscount,
+            updatedSessions
           );
+
           setEditInvoiceModalOpen(false);
           setEditingInvoice(null);
           setEditDiscount(0);
@@ -3016,54 +3124,84 @@ const InvoicePage = () => {
         okText="Lưu"
         cancelText="Hủy"
       >
-        {editingInvoice && (
-          <Space direction="vertical" style={{ width: "100%" }} size="middle">
-            <Row gutter={16}>
-              <Col span={12}>
-                <Text strong>Học sinh: </Text>
-                <Text>{editingInvoice.studentName}</Text>
-              </Col>
-              <Col span={12}>
-                <Text strong>Tháng: </Text>
-                <Text>{`${editingInvoice.month + 1}/${editingInvoice.year}`}</Text>
-              </Col>
-            </Row>
+        {editingInvoice && (() => {
+          // Group sessions by subject (Môn học)
+          const subjectGroups: Record<string, {
+            subject: string;
+            sessionCount: number;
+            sessions: AttendanceSession[];
+            currentPrice: number;
+          }> = {};
+          
+          editingInvoice.sessions.forEach((session: AttendanceSession) => {
+            const classId = session["Class ID"];
+            const classData = classes.find(c => c.id === classId);
+            const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
+            
+            if (!subjectGroups[subject]) {
+              subjectGroups[subject] = {
+                subject,
+                sessionCount: 0,
+                sessions: [],
+                currentPrice: editSessionPrices[subject] || (getSafeField(session, "Giá/buổi") || 0),
+              };
+            }
+            
+            subjectGroups[subject].sessionCount++;
+            subjectGroups[subject].sessions.push(session);
+          });
 
-            <div>
-              <Text strong style={{ display: "block", marginBottom: 8 }}>
-                Chi tiết từng buổi học ({editingInvoice.sessions.length} buổi):
-              </Text>
-              <div style={{ maxHeight: 300, overflowY: "auto", border: "1px solid #d9d9d9", borderRadius: 6 }}>
-                <table style={{ width: "100%", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ backgroundColor: "#fafafa", position: "sticky", top: 0 }}>
-                      <th style={{ padding: "8px 12px", textAlign: "left", borderBottom: "1px solid #d9d9d9" }}>STT</th>
-                      <th style={{ padding: "8px 12px", textAlign: "left", borderBottom: "1px solid #d9d9d9" }}>Ngày</th>
-                      <th style={{ padding: "8px 12px", textAlign: "left", borderBottom: "1px solid #d9d9d9" }}>Lớp</th>
-                      <th style={{ padding: "8px 12px", textAlign: "right", borderBottom: "1px solid #d9d9d9" }}>Học phí (đ)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {editingInvoice.sessions
-                      .sort((a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime())
-                      .map((session: AttendanceSession, index: number) => (
-                        <tr key={session.id} style={{ borderBottom: "1px solid #f0f0f0" }}>
-                          <td style={{ padding: "8px 12px" }}>{index + 1}</td>
-                          <td style={{ padding: "8px 12px" }}>
-                            {dayjs(session["Ngày"]).format("DD/MM/YYYY")}
+          const totalBySubject = Object.entries(subjectGroups).map(([subject, data]) => ({
+            subject,
+            ...data,
+            total: (editSessionPrices[subject] || data.currentPrice || 0) * data.sessionCount,
+          }));
+
+          return (
+            <Space direction="vertical" style={{ width: "100%" }} size="middle">
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Text strong>Học sinh: </Text>
+                  <Text>{editingInvoice.studentName}</Text>
+                </Col>
+                <Col span={12}>
+                  <Text strong>Tháng: </Text>
+                  <Text>{`${editingInvoice.month + 1}/${editingInvoice.year}`}</Text>
+                </Col>
+              </Row>
+
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 8 }}>
+                  Chi tiết theo môn học ({Object.keys(subjectGroups).length} môn):
+                </Text>
+                <div style={{ maxHeight: 400, overflowY: "auto", border: "1px solid #d9d9d9", borderRadius: 6 }}>
+                  <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                    <thead>
+                      <tr style={{ backgroundColor: "#fafafa", position: "sticky", top: 0 }}>
+                        <th style={{ padding: "8px 12px", textAlign: "left", borderBottom: "1px solid #d9d9d9", width: "35%" }}>Môn học</th>
+                        <th style={{ padding: "8px 12px", textAlign: "center", borderBottom: "1px solid #d9d9d9", width: "15%" }}>Số buổi</th>
+                        <th style={{ padding: "8px 12px", textAlign: "right", borderBottom: "1px solid #d9d9d9", width: "25%" }}>Giá/buổi (đ)</th>
+                        <th style={{ padding: "8px 12px", textAlign: "right", borderBottom: "1px solid #d9d9d9", width: "25%" }}>Tổng tiền (đ)</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {totalBySubject.map((item, index) => (
+                        <tr key={item.subject} style={{ borderBottom: "1px solid #f0f0f0" }}>
+                          <td style={{ padding: "12px" }}>
+                            <Text>{item.subject}</Text>
                           </td>
-                          <td style={{ padding: "8px 12px" }}>
-                            {session["Tên lớp"] || session["Mã lớp"]}
+                          <td style={{ padding: "12px", textAlign: "center" }}>
+                            <Tag color="blue">{item.sessionCount} buổi</Tag>
                           </td>
-                          <td style={{ padding: "8px 12px", textAlign: "right" }}>
+                          <td style={{ padding: "12px", textAlign: "right" }}>
                             <InputNumber
                               size="small"
                               min={0}
-                              value={editSessionPrices[session.id] ?? 0}
+                              value={editSessionPrices[item.subject] ?? item.currentPrice}
                               onChange={(value) => {
                                 setEditSessionPrices((prev) => ({
                                   ...prev,
-                                  [session.id]: value || 0,
+                                  [item.subject]: value || 0,
                                 }));
                               }}
                               formatter={(value) =>
@@ -3072,63 +3210,69 @@ const InvoicePage = () => {
                               parser={(value) =>
                                 Number(value!.replace(/\$\s?|(,*)/g, ""))
                               }
-                              style={{ width: 120 }}
+                              style={{ width: 140 }}
                             />
+                          </td>
+                          <td style={{ padding: "12px", textAlign: "right" }}>
+                            <Text strong style={{ color: "#1890ff" }}>
+                              {((editSessionPrices[item.subject] ?? item.currentPrice) * item.sessionCount).toLocaleString("vi-VN")} đ
+                            </Text>
                           </td>
                         </tr>
                       ))}
-                  </tbody>
-                </table>
+                    </tbody>
+                  </table>
+                </div>
               </div>
-            </div>
 
-            <Row gutter={16}>
-              <Col span={12}>
-                <Text strong>Tổng học phí: </Text>
-                <Text style={{ color: "#36797f", fontSize: 15 }}>
-                  {Object.values(editSessionPrices)
-                    .reduce((sum, price) => sum + price, 0)
-                    .toLocaleString("vi-VN")}{" "}
+              <Row gutter={16}>
+                <Col span={12}>
+                  <Text strong>Tổng học phí: </Text>
+                  <Text style={{ color: "#36797f", fontSize: 15 }}>
+                    {totalBySubject
+                      .reduce((sum, item) => sum + (item.total || 0), 0)
+                      .toLocaleString("vi-VN")}{" "}
+                    đ
+                  </Text>
+                </Col>
+                <Col span={12}>
+                  <Text strong>Tổng số buổi: </Text>
+                  <Text>{editingInvoice.sessions.length} buổi</Text>
+                </Col>
+              </Row>
+
+              <div>
+                <Text strong style={{ display: "block", marginBottom: 4 }}>
+                  Miễn giảm học phí:
+                </Text>
+                <InputNumber
+                  style={{ width: "100%" }}
+                  value={editDiscount}
+                  onChange={(value) => setEditDiscount(value || 0)}
+                  formatter={(value) =>
+                    `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
+                  }
+                  parser={(value) => Number(value!.replace(/\$\s?|(,*)/g, ""))}
+                  addonAfter="đ"
+                  min={0}
+                  max={totalBySubject.reduce((sum, item) => sum + (item.total || 0), 0)}
+                  placeholder="Nhập số tiền miễn giảm"
+                />
+              </div>
+
+              <div style={{ backgroundColor: "#f6ffed", padding: "12px 16px", borderRadius: 6, border: "1px solid #b7eb8f" }}>
+                <Text strong style={{ fontSize: 16 }}>Phải thu: </Text>
+                <Text strong style={{ color: "#52c41a", fontSize: 18 }}>
+                  {Math.max(
+                    0,
+                    totalBySubject.reduce((sum, item) => sum + (item.total || 0), 0) - editDiscount
+                  ).toLocaleString("vi-VN")}{" "}
                   đ
                 </Text>
-              </Col>
-              <Col span={12}>
-                <Text strong>Số buổi: </Text>
-                <Text>{editingInvoice.sessions.length} buổi</Text>
-              </Col>
-            </Row>
-
-            <div>
-              <Text strong style={{ display: "block", marginBottom: 4 }}>
-                Miễn giảm học phí:
-              </Text>
-              <InputNumber
-                style={{ width: "100%" }}
-                value={editDiscount}
-                onChange={(value) => setEditDiscount(value || 0)}
-                formatter={(value) =>
-                  `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")
-                }
-                parser={(value) => Number(value!.replace(/\$\s?|(,*)/g, ""))}
-                addonAfter="đ"
-                min={0}
-                max={Object.values(editSessionPrices).reduce((sum, price) => sum + price, 0)}
-                placeholder="Nhập số tiền miễn giảm"
-              />
-            </div>
-
-            <div style={{ backgroundColor: "#f6ffed", padding: "12px 16px", borderRadius: 6, border: "1px solid #b7eb8f" }}>
-              <Text strong style={{ fontSize: 16 }}>Phải thu: </Text>
-              <Text strong style={{ color: "#52c41a", fontSize: 18 }}>
-                {Math.max(
-                  0,
-                  Object.values(editSessionPrices).reduce((sum, price) => sum + price, 0) - editDiscount
-                ).toLocaleString("vi-VN")}{" "}
-                đ
-              </Text>
-            </div>
-          </Space>
-        )}
+              </div>
+            </Space>
+          );
+        })()}
       </Modal>
 
       {/* Image Preview Modal */}
