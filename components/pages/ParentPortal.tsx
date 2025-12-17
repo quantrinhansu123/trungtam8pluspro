@@ -243,25 +243,67 @@ const ParentPortal: React.FC = () => {
 
   // Calculate statistics
   const stats = useMemo(() => {
+    // Collect all numeric scores from a record (single + detailed)
+    const collectScores = (record: any) => {
+      const collected: number[] = [];
+
+      // Check all possible score fields: "Điểm kiểm tra", "Điểm", " Điểm"
+      const singleScore = record?.["Điểm kiểm tra"] ?? record?.["Điểm"] ?? record?.[" Điểm"];
+      if (singleScore !== undefined && singleScore !== null && !isNaN(Number(singleScore))) {
+        collected.push(Number(singleScore));
+      }
+
+      const detailedScores = record?.["Chi tiết điểm"];
+      if (Array.isArray(detailedScores)) {
+        detailedScores.forEach((detail: any) => {
+          const scoreValue = detail?.["Điểm"];
+          if (scoreValue !== undefined && scoreValue !== null && !isNaN(Number(scoreValue))) {
+            collected.push(Number(scoreValue));
+          }
+        });
+      }
+
+      return collected;
+    };
+
     const totalSessions = attendanceSessions.length;
     let attendedSessions = 0;
     let lateSessions = 0;
     let totalScore = 0;
-    let scoredSessions = 0;
+    let scoredSessions = 0; // số bài/điểm thu được (không chỉ theo buổi)
     let totalBonusPoints = 0;
     let redeemedBonusPoints = 0;
 
-    attendanceSessions.forEach((session) => {
+    console.log("📊 ParentPortal Stats - Calculating scores...");
+    console.log("Total attendance sessions:", attendanceSessions.length);
+    console.log("studentId:", userProfile?.studentId);
+
+    attendanceSessions.forEach((session, index) => {
       const record = session["Điểm danh"]?.find(
         (r: any) => r["Student ID"] === userProfile?.studentId
       );
 
+      console.log(`Session ${index + 1}:`, {
+        sessionId: session.id,
+        date: session["Ngày"],
+        class: session["Tên lớp"],
+        studentFound: !!record,
+        record: record ? {
+          "Điểm kiểm tra": record["Điểm kiểm tra"],
+          "Điểm": record["Điểm"],
+          " Điểm": record[" Điểm"],
+          "Chi tiết điểm": record["Chi tiết điểm"]
+        } : null
+      });
+
       if (record) {
         if (record["Có mặt"]) attendedSessions++;
         if (record["Đi muộn"]) lateSessions++;
-        if (record["Điểm"] !== null && record["Điểm"] !== undefined) {
-          totalScore += record["Điểm"];
-          scoredSessions++;
+        const scores = collectScores(record);
+        console.log(`  Collected scores:`, scores);
+        if (scores.length > 0) {
+          totalScore += scores.reduce((a, b) => a + b, 0);
+          scoredSessions += scores.length;
         }
         // Tính tổng điểm thưởng
         if (record["Điểm thưởng"] !== null && record["Điểm thưởng"] !== undefined) {

@@ -684,20 +684,36 @@ const StudentReportPage = () => {
               <Statistic
                 title="Điểm trung bình"
                 value={(() => {
-                  const scores = studentSessions
-                    .map(
-                      (s) =>
-                        s["Điểm danh"]?.find(
-                          (r) => r["Student ID"] === student.id
-                        )?.[" Điểm"]
-                    )
-                    .filter(
-                      (score) => score !== undefined && score !== null
-                    ) as number[];
-                  if (scores.length === 0) return 0;
-                  return (
-                    scores.reduce((a, b) => a + b, 0) / scores.length
-                  ).toFixed(1);
+                  const allScores: number[] = [];
+                  
+                  // Collect all scores from sessions
+                  studentSessions.forEach((s) => {
+                    const studentRecord = s["Điểm danh"]?.find(
+                      (r) => r["Student ID"] === student.id
+                    );
+                    
+                    if (studentRecord) {
+                      // Check all possible score fields: "Điểm kiểm tra", "Điểm", " Điểm"
+                      const singleScore = studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? studentRecord[" Điểm"];
+                      if (singleScore !== undefined && singleScore !== null && !isNaN(Number(singleScore))) {
+                        allScores.push(Number(singleScore));
+                      }
+                      
+                      // Add all detailed scores if exist
+                      const detailedScores = studentRecord["Chi tiết điểm"];
+                      if (detailedScores && Array.isArray(detailedScores)) {
+                        detailedScores.forEach((detail: any) => {
+                          const scoreValue = detail["Điểm"];
+                          if (scoreValue !== undefined && scoreValue !== null && !isNaN(Number(scoreValue))) {
+                            allScores.push(Number(scoreValue));
+                          }
+                        });
+                      }
+                    }
+                  });
+                  
+                  if (allScores.length === 0) return "0.0";
+                  return (allScores.reduce((a, b) => a + b, 0) / allScores.length).toFixed(1);
                 })()}
                 suffix="/ 10"
               />

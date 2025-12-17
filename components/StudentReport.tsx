@@ -679,6 +679,25 @@ const StudentReport = ({
   };
 
   const generateSessionPrintContent = () => {
+    const collectScores = (record: any) => {
+      const collected: number[] = [];
+      // Check all possible score fields: "Điểm kiểm tra", "Điểm", " Điểm"
+      const singleScore = record?.["Điểm kiểm tra"] ?? record?.["Điểm"] ?? record?.[" Điểm"];
+      if (singleScore !== undefined && singleScore !== null && !isNaN(Number(singleScore))) {
+        collected.push(Number(singleScore));
+      }
+      const detailedScores = record?.["Chi tiết điểm"];
+      if (Array.isArray(detailedScores)) {
+        detailedScores.forEach((detail: any) => {
+          const val = detail?.["Điểm"];
+          if (val !== undefined && val !== null && !isNaN(Number(val))) {
+            collected.push(Number(val));
+          }
+        });
+      }
+      return collected;
+    };
+
     // Get status text
     const getStatusText = (record: any) => {
       if (record["Có mặt"]) {
@@ -698,14 +717,13 @@ const StudentReport = ({
     };
 
     // Calculate average score
-    const scores = studentSessions
-      .map(
-        (s) =>
-          s["Điểm danh"]?.find((r) => r["Student ID"] === student.id)?.[
-            "Điểm"
-          ]
-      )
-      .filter((score) => score !== undefined && score !== null) as number[];
+    const scores: number[] = [];
+    studentSessions.forEach((s) => {
+      const record = s["Điểm danh"]?.find((r) => r["Student ID"] === student.id);
+      if (record) {
+        scores.push(...collectScores(record));
+      }
+    });
     const averageScore =
       scores.length > 0
         ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
@@ -736,8 +754,8 @@ const StudentReport = ({
       let subjectScores: number[] = [];
       sortedSessions.forEach((session) => {
         const record = session["Điểm danh"]?.find(r => r["Student ID"] === student.id);
-        if (record?.["Điểm"] !== null && record?.["Điểm"] !== undefined) {
-          subjectScores.push(record["Điểm"]);
+        if (record) {
+          subjectScores = subjectScores.concat(collectScores(record));
         }
       });
       const subjectAvg = subjectScores.length > 0 
