@@ -1,6 +1,6 @@
 import { useAuth } from "@/contexts/AuthContext";
 import React, { useLayoutEffect, useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { useNavigate, useLocation } from "react-router-dom";
 import { Form, Input, Button, Alert, Tabs } from "antd";
 import { UserOutlined, LockOutlined, IdcardOutlined } from "@ant-design/icons";
 
@@ -11,7 +11,8 @@ const Login: React.FC = () => {
   const [success, setSuccess] = useState("");
   const [activeTab, setActiveTab] = useState("teacher");
   const navigate = useNavigate();
-  const { currentUser, userProfile } = useAuth();
+  const location = useLocation();
+  const { currentUser, userProfile, loading: authLoading } = useAuth();
 
   const handleEmailPasswordSubmit = async (values: any) => {
     setError("");
@@ -23,7 +24,9 @@ const Login: React.FC = () => {
       setLoading(true);
       await signInWithTeacherCredentials(email.trim(), password);
       setSuccess("Đăng nhập thành công! Chuyển hướng...");
-      navigate("/workspace");
+      // Get the redirect path from location state, or default to /workspace
+      const from = (location.state as any)?.from?.pathname || "/workspace";
+      navigate(from, { replace: true });
     } catch (err: any) {
       console.error("Login error:", err);
 
@@ -56,7 +59,7 @@ const Login: React.FC = () => {
       setLoading(true);
       await signInWithParentCredentials(studentCode.trim(), password);
       setSuccess("Đăng nhập thành công! Chuyển hướng...");
-      navigate("/parent-portal");
+      navigate("/parent-portal", { replace: true });
     } catch (err: any) {
       console.error("Parent login error:", err);
       setError(err.message || "Đăng nhập không thành công. Vui lòng thử lại.");
@@ -65,15 +68,18 @@ const Login: React.FC = () => {
     }
   };
 
+  // Only redirect if we're on the login page and user is authenticated
+  // Don't redirect if auth is still loading (to avoid flickering)
   useLayoutEffect(() => {
-    if (currentUser && userProfile) {
+    if (!authLoading && currentUser && userProfile && location.pathname === "/login") {
       if (userProfile.role === "parent") {
-        navigate("/parent-portal");
+        navigate("/parent-portal", { replace: true });
       } else {
-        navigate("/workspace/students");
+        // Redirect to workspace, let the router handle the rest
+        navigate("/workspace", { replace: true });
       }
     }
-  }, [currentUser, userProfile, navigate]);
+  }, [currentUser, userProfile, navigate, location.pathname, authLoading]);
 
   return (
     <div 

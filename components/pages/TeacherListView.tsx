@@ -107,15 +107,8 @@ const getTuitionFromClassSession = (
   teacher?: Teacher
 ): number => {
   const candidates = [
-    classData?.["Học phí mỗi buổi"],
-    classData?.["Học phí"],
-    classData?.["Tuition per session"],
-    classData?.["Tuition"] || classData?.["price"] || classData?.["Giá"] || classData?.["Price"],
-    session?.["Học phí mỗi buổi"],
-    session?.["Học phí"],
-    session?.["Tuition per session"],
-    session?.["Tuition"] || session?.["Giá"] || session?.["Price"],
     classData?.["Lương GV"],
+    session?.["Lương GV"],
     teacher?.["Lương theo buổi"],
   ];
   for (const candidate of candidates) {

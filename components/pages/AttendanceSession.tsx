@@ -35,6 +35,11 @@ interface Student {
   id: string;
   "Họ và tên": string;
   "Mã học sinh": string;
+  "SĐT phụ huynh"?: string;
+  "Số điện thoại phụ huynh"?: string;
+  "SĐT phụ huynh 1"?: string;
+  "SDT phụ huynh"?: string;
+  "Parent phone"?: string;
 }
 
 interface TimetableEntry {
@@ -363,16 +368,27 @@ const AttendanceSessionPage = () => {
 
         // Filter students by enrollment date - only show students enrolled on or before session date
         const enrollments = classData["Student Enrollments"] || {};
-        const classStudents = allStudents.filter((s) => {
-          if (!classData["Student IDs"]?.includes(s.id)) return false;
-          
-          // If no enrollment date recorded, show the student (backward compatibility)
-          if (!enrollments[s.id]) return true;
-          
-          // Check if student enrolled on or before session date
-          const enrollmentDate = enrollments[s.id].enrollmentDate;
-          return enrollmentDate <= sessionDate;
-        });
+        const classStudents = allStudents
+          .filter((s) => {
+            if (!classData["Student IDs"]?.includes(s.id)) return false;
+            
+            // If no enrollment date recorded, show the student (backward compatibility)
+            if (!enrollments[s.id]) return true;
+            
+            // Check if student enrolled on or before session date
+            const enrollmentDate = enrollments[s.id].enrollmentDate;
+            return enrollmentDate <= sessionDate;
+          })
+          .map((s) => ({
+            ...s,
+            "SĐT phụ huynh":
+              s["SĐT phụ huynh"] ||
+              s["Số điện thoại phụ huynh"] ||
+              s["SĐT phụ huynh 1"] ||
+              s["SDT phụ huynh"] ||
+              s["Parent phone"] ||
+              "",
+          }));
 
         setStudents(classStudents);
       }
@@ -1331,7 +1347,16 @@ const AttendanceSessionPage = () => {
       title: "Họ và tên",
       dataIndex: "Họ và tên",
       key: "name",
-      render: (_: any, record: Student) => record["Họ và tên"],
+      render: (_: any, record: Student) => (
+        <div>
+          <div>{record["Họ và tên"]}</div>
+          {(record["SĐT phụ huynh"] || record["Số điện thoại phụ huynh"] || record["SĐT phụ huynh 1"] || record["SDT phụ huynh"] || record["Parent phone"]) && (
+            <div style={{ fontSize: "11px", color: "#666" }}>
+              📞 {record["SĐT phụ huynh"] || record["Số điện thoại phụ huynh"] || record["SĐT phụ huynh 1"] || record["SDT phụ huynh"] || record["Parent phone"]}
+            </div>
+          )}
+        </div>
+      ),
     },
     {
       title: "Có mặt",

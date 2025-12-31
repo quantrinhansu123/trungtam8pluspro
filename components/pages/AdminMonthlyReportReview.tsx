@@ -57,7 +57,8 @@ const AdminMonthlyReportReview = () => {
   const [allComments, setAllComments] = useState<MonthlyComment[]>([]);
   const [sessions, setSessions] = useState<AttendanceSession[]>([]);
   const [students, setStudents] = useState<Student[]>([]);
-  const [selectedMonth, setSelectedMonth] = useState<dayjs.Dayjs>(dayjs());
+  // Align default view with teacher submission month (teacher defaults to previous month)
+  const [selectedMonth, setSelectedMonth] = useState<dayjs.Dayjs>(dayjs().subtract(1, "month"));
   const [statusFilter, setStatusFilter] = useState<string>("all");
   const [loading, setLoading] = useState(false);
   const [searchText, setSearchText] = useState("");

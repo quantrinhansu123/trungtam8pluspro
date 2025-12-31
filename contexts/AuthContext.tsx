@@ -22,38 +22,39 @@ const TEACHERS_URL = `${DATABASE_URL_BASE}/datasheet/Gi%C3%A1o_vi%C3%AAn.json`;
 const STUDENTS_URL = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh.json`;
 
 // Session storage keys
-const SESSION_KEYS = {
+const STORAGE_KEYS = {
   CURRENT_USER: "tritue8_current_user",
   USER_PROFILE: "tritue8_user_profile",
   NEEDS_ONBOARDING: "tritue8_needs_onboarding",
+  AUTH_PERSISTENCE: "tritue8_auth_persistence",
 } as const;
 
-// Helper functions for session storage
-const saveToSession = (key: string, value: any) => {
+// Helper functions for local storage (changed from session storage)
+const saveToStorage = (key: string, value: any) => {
   try {
-    sessionStorage.setItem(key, JSON.stringify(value));
+    localStorage.setItem(key, JSON.stringify(value));
   } catch (error) {
-    console.warn("⚠️ Failed to save to session storage:", error);
+    console.warn("⚠️ Failed to save to local storage:", error);
   }
 };
 
-const loadFromSession = <T,>(key: string): T | null => {
+const loadFromStorage = <T,>(key: string): T | null => {
   try {
-    const item = sessionStorage.getItem(key);
+    const item = localStorage.getItem(key);
     return item ? JSON.parse(item) : null;
   } catch (error) {
-    console.warn("⚠️ Failed to load from session storage:", error);
+    console.warn("⚠️ Failed to load from local storage:", error);
     return null;
   }
 };
 
-const clearSession = () => {
+const clearStorage = () => {
   try {
-    Object.values(SESSION_KEYS).forEach((key) =>
-      sessionStorage.removeItem(key)
+    Object.values(STORAGE_KEYS).forEach((key) =>
+      localStorage.removeItem(key)
     );
   } catch (error) {
-    console.warn("⚠️ Failed to clear session storage:", error);
+    console.warn("⚠️ Failed to clear local storage:", error);
   }
 };
 
@@ -94,18 +95,22 @@ interface AuthProviderProps {
 
 export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    // Initialize from session storage
-    return loadFromSession<User>(SESSION_KEYS.CURRENT_USER);
+    // Don't load User object from localStorage - it's not serializable
+    // Instead, we'll rely on userProfile and onAuthStateChanged
+    return null;
   });
   const [userProfile, setUserProfile] = useState<UserProfile | null>(() => {
-    // Initialize from session storage
-    return loadFromSession<UserProfile>(SESSION_KEYS.USER_PROFILE);
+    // Initialize from local storage
+    return loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE);
   });
   const [needsOnboarding, setNeedsOnboarding] = useState(() => {
-    // Initialize from session storage
-    return loadFromSession<boolean>(SESSION_KEYS.NEEDS_ONBOARDING) || false;
+    // Initialize from local storage
+    return loadFromStorage<boolean>(STORAGE_KEYS.NEEDS_ONBOARDING) || false;
   });
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(() => {
+    const storedProfile = loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE);
+    return !storedProfile; // If we have a stored profile, we don't need to wait for onAuthStateChanged
+  });
 
   // Fetch or create user profile
   const fetchUserProfile = async (user: User): Promise<UserProfile | null> => {
@@ -221,11 +226,30 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
   useEffect(() => {
     let isSubscribed = true;
 
+    // Mark auth persistence in storage
+    saveToStorage(STORAGE_KEYS.AUTH_PERSISTENCE, true);
+
+    // Restore currentUser from userProfile if available (for teacher/parent auth)
+    const storedProfile = loadFromStorage<UserProfile>(STORAGE_KEYS.USER_PROFILE);
+    if (storedProfile && !currentUser) {
+      // Create minimal user object from profile
+      const restoredUser = {
+        uid: storedProfile.uid,
+        email: storedProfile.email,
+        emailVerified: true,
+        displayName: storedProfile.displayName || undefined,
+      } as User;
+      setCurrentUser(restoredUser);
+    }
+
     const unsubscribe = onAuthStateChanged(auth, async (user) => {
       if (!isSubscribed) return;
 
+      console.log('🔐 Auth state changed:', { user: user?.email || 'null', uid: user?.uid || 'null' });
+      
       setCurrentUser(user);
-      saveToSession(SESSION_KEYS.CURRENT_USER, user);
+      // Don't save User object to localStorage - it's not serializable
+      // saveToStorage(STORAGE_KEYS.CURRENT_USER, user);
 
       if (user) {
         console.log("👤 User logged in:", user.email);
@@ -234,29 +258,33 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           if (!isSubscribed) return;
 
           setUserProfile(profile);
-          saveToSession(SESSION_KEYS.USER_PROFILE, profile);
+          saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
 
           // Check if teacher needs onboarding
           if (profile && profile.role === "teacher" && !profile.teacherId) {
             console.log("🎓 Teacher needs onboarding");
             setNeedsOnboarding(true);
-            saveToSession(SESSION_KEYS.NEEDS_ONBOARDING, true);
+            saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, true);
           } else {
             setNeedsOnboarding(false);
-            saveToSession(SESSION_KEYS.NEEDS_ONBOARDING, false);
+            saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
           }
         } catch (error) {
           console.error("❌ Error loading user profile:", error);
           setUserProfile(null);
           setNeedsOnboarding(false);
-          saveToSession(SESSION_KEYS.USER_PROFILE, null);
-          saveToSession(SESSION_KEYS.NEEDS_ONBOARDING, false);
+          saveToStorage(STORAGE_KEYS.USER_PROFILE, null);
+          saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
         }
       } else {
         console.log("👤 User logged out");
         setUserProfile(null);
         setNeedsOnboarding(false);
-        clearSession();
+        // Only clear storage if this is an intentional logout, not a page refresh
+        const authPersistence = loadFromStorage<boolean>(STORAGE_KEYS.AUTH_PERSISTENCE);
+        if (!authPersistence) {
+          clearStorage();
+        }
       }
 
       if (isSubscribed) {
@@ -375,10 +403,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUserProfile(profile);
       setNeedsOnboarding(false);
 
-      // Save to session storage
-      saveToSession(SESSION_KEYS.CURRENT_USER, mockUser);
-      saveToSession(SESSION_KEYS.USER_PROFILE, profile);
-      saveToSession(SESSION_KEYS.NEEDS_ONBOARDING, false);
+      // Save to local storage
+      saveToStorage(STORAGE_KEYS.CURRENT_USER, mockUser);
+      saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
+      saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
 
       console.log("✅ Teacher sign in successful:", profile);
     } catch (error) {
@@ -459,10 +487,10 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       setUserProfile(profile);
       setNeedsOnboarding(false);
 
-      // Save to session storage
-      saveToSession(SESSION_KEYS.CURRENT_USER, mockUser);
-      saveToSession(SESSION_KEYS.USER_PROFILE, profile);
-      saveToSession(SESSION_KEYS.NEEDS_ONBOARDING, false);
+      // Save to local storage
+      saveToStorage(STORAGE_KEYS.CURRENT_USER, mockUser);
+      saveToStorage(STORAGE_KEYS.USER_PROFILE, profile);
+      saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
 
       console.log("✅ Parent sign in successful:", profile);
     } catch (error) {
@@ -473,13 +501,16 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
 
   const signOut = async () => {
     try {
+      console.log("🚪 Signing out");
+      
       // Clear local state first (for teacher authentication)
       setCurrentUser(null);
       setUserProfile(null);
       setNeedsOnboarding(false);
 
-      // Clear session storage
-      clearSession();
+      // Mark as intentional logout before clearing storage
+      localStorage.removeItem(STORAGE_KEYS.AUTH_PERSISTENCE);
+      clearStorage();
 
       // Try Firebase signOut (for legacy users)
       try {
@@ -560,8 +591,8 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         teacherId,
         updatedAt: new Date().toISOString(),
       };
-      saveToSession(SESSION_KEYS.USER_PROFILE, updatedProfile);
-      saveToSession(SESSION_KEYS.NEEDS_ONBOARDING, false);
+      saveToStorage(STORAGE_KEYS.USER_PROFILE, updatedProfile);
+      saveToStorage(STORAGE_KEYS.NEEDS_ONBOARDING, false);
 
       console.log("🎉 Onboarding completed successfully");
     } catch (error) {

@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useMemo } from "react";
 import { useAuth } from "@/contexts/AuthContext";
-import { DATABASE_URL_BASE } from "@/firebase";
+import { DATABASE_URL_BASE, database } from "@/firebase";
+import { ref, onValue } from "firebase/database";
 import {
   Card,
   Row,
@@ -65,6 +66,7 @@ const ParentPortal: React.FC = () => {
   );
   const [selectedScheduleEvent, setSelectedScheduleEvent] = useState<any>(null);
   const [scheduleDetailModalOpen, setScheduleDetailModalOpen] = useState(false);
+  const [rooms, setRooms] = useState<Map<string, any>>(new Map());
 
   // Hour slots for timeline view (6:00 - 22:00)
   const HOUR_SLOTS = Array.from({ length: 17 }, (_, i) => {
@@ -342,6 +344,35 @@ const ParentPortal: React.FC = () => {
       .slice(0, 10);
   }, [attendanceSessions]);
 
+  // Load rooms
+  useEffect(() => {
+    const roomsRef = ref(database, "datasheet/Phòng_học");
+    const unsubscribe = onValue(roomsRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const roomsMap = new Map<string, any>();
+        Object.entries(data).forEach(([id, value]) => {
+          roomsMap.set(id, { id, ...(value as any) });
+        });
+        setRooms(roomsMap);
+      } else {
+        setRooms(new Map());
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Helper to get room name from room ID
+  const getRoomName = (roomId: string): string => {
+    if (!roomId) return "";
+    const room = rooms.get(roomId);
+    if (room && room["Tên phòng"]) {
+      return room["Tên phòng"];
+    }
+    // Fallback to ID if room not found or if it's already a readable name
+    return roomId;
+  };
+
   // Get week days from currentWeekStart
   const weekDays = useMemo(() => {
     return Array.from({ length: 7 }, (_, i) =>
@@ -361,6 +392,7 @@ const ParentPortal: React.FC = () => {
       const schedules = cls["Lịch học"] || [];
       schedules.forEach((schedule: any) => {
         if (schedule["Thứ"] === dayOfWeek) {
+          const roomId = cls["Phòng học"] || "";
           events.push({
             type: "class",
             class: cls,
@@ -372,6 +404,7 @@ const ParentPortal: React.FC = () => {
             className: cls["Tên lớp"],
             teacher: cls["Giáo viên chủ nhiệm"],
             location: schedule["Địa điểm"],
+            room: roomId ? getRoomName(roomId) : "",
           });
         }
       });
@@ -387,7 +420,7 @@ const ParentPortal: React.FC = () => {
       result[index] = getScheduleForDate(day);
     });
     return result;
-  }, [weekDays, classes]);
+  }, [weekDays, classes, rooms]);
 
   // Prepare calendar data
   const calendarData = useMemo(() => {
@@ -831,6 +864,11 @@ const ParentPortal: React.FC = () => {
                                       <div style={{ fontSize: "10px", color: "#666" }}>
                                         {event.className}
                                       </div>
+                                      {event.room && (
+                                        <div style={{ fontSize: "10px", color: "#666" }}>
+                                          🏫 {event.room}
+                                        </div>
+                                      )}
                                       {event.location && (
                                         <div style={{ fontSize: "10px", color: "#666" }}>
                                           📍 {event.location}

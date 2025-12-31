@@ -64,6 +64,8 @@ export interface ClassSchedule {
     "Giờ bắt đầu": string; // Start time (HH:mm)
     "Giờ kết thúc": string; // End time (HH:mm)
     "Địa điểm"?: string; // Location
+    "Phòng học"?: string; // Room ID
+    "Tên lớp"?: string; // Class name (for schedule entry)
 }
 
 // Attendance Types
@@ -80,13 +82,13 @@ export interface AttendanceSession {
     "Trạng thái": "not_started" | "in_progress" | "completed"; // Session status
     "Điểm danh": AttendanceRecord[]; // Attendance records
     "Bài tập"?: HomeworkAssignment; // Homework assignment
+    "Nội dung buổi học"?: string; // Lesson content
+    "Tài liệu nội dung"?: any[]; // Lesson attachments
     "Timestamp": string; // Created timestamp
     "Thời gian điểm danh"?: string; // Attendance taken time
     "Người điểm danh"?: string; // Person who took attendance
     "Thời gian hoàn thành"?: string; // Completion time
     "Người hoàn thành"?: string; // Person who completed
-    "Nội dung buổi học"?: string; // Lesson content
-    "Tài liệu nội dung"?: any[]; // Lesson attachments
 }
 
 export interface ScoreDetail {

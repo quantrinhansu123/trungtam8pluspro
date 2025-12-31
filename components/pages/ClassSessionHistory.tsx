@@ -517,7 +517,6 @@ const ClassSessionHistory = () => {
               handleRecordChange(record["Student ID"], "Điểm thưởng", currentRecord["Điểm thưởng"] ?? null);
             }
           }}
-          disabled={!record["Có mặt"]}
           style={{ width: "100%" }}
         />
       ),

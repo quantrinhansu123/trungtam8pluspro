@@ -113,6 +113,8 @@ const ClassFormModal = ({
         startTime: dayjs(s["Giờ bắt đầu"], "HH:mm"),
         endTime: dayjs(s["Giờ kết thúc"], "HH:mm"),
         location: s["Địa điểm"],
+        room: s["Phòng học"] || "",
+        className: s["Tên lớp"] || "",
       }));
 
       form.setFieldsValue({
@@ -122,7 +124,6 @@ const ClassFormModal = ({
         grade: editingClass["Khối"],
         teacherId: editingClass["Teacher ID"],
         teacherSalary: editingClass["Lương GV"] || 0,
-        roomId: editingClass["Phòng học"],
         tuitionPerSession: editingClass["Học phí mỗi buổi"] || 0,
         status: editingClass["Trạng thái"],
         notes: editingClass["Ghi chú"],
@@ -135,7 +136,6 @@ const ClassFormModal = ({
 
   // Check for schedule conflicts
   const checkScheduleConflict = (
-    roomId: string,
     schedules: any[],
     currentClassId?: string
   ): { hasConflict: boolean; conflictDetails: string[] } => {
@@ -145,19 +145,23 @@ const ClassFormModal = ({
       const day = schedule.day;
       const startTime = schedule.startTime.format("HH:mm");
       const endTime = schedule.endTime.format("HH:mm");
+      const roomId = schedule.room;
+
+      // Skip if no room selected for this schedule
+      if (!roomId) return;
 
       // Check all other classes
       classes.forEach((cls) => {
         // Skip current class when editing
         if (currentClassId && cls.id === currentClassId) return;
 
-        // Check if same room
-        const clsRoomId = cls["Phòng học"];
-        if (clsRoomId !== roomId) return;
-
         // Check schedules
         cls["Lịch học"]?.forEach((clsSchedule) => {
           if (clsSchedule["Thứ"] !== day) return;
+
+          // Check if same room
+          const clsRoomId = clsSchedule["Phòng học"];
+          if (clsRoomId !== roomId) return;
 
           const clsStart = clsSchedule["Giờ bắt đầu"];
           const clsEnd = clsSchedule["Giờ kết thúc"];
@@ -200,12 +204,13 @@ const ClassFormModal = ({
           "Giờ bắt đầu": s.startTime.format("HH:mm"),
           "Giờ kết thúc": s.endTime.format("HH:mm"),
           "Địa điểm": s.location || "",
+          "Phòng học": s.room || "",
+          "Tên lớp": s.className || "",
         })) || [];
 
-      // Check for schedule conflicts if room is selected
-      if (values.roomId && schedules.length > 0) {
+      // Check for schedule conflicts
+      if (schedules.length > 0) {
         const conflictCheck = checkScheduleConflict(
-          values.roomId,
           values.schedules || [],
           editingClass?.id
         );
@@ -230,8 +235,9 @@ const ClassFormModal = ({
         }
       }
 
-      // Get selected room info
-      const selectedRoom = rooms.find((r) => r.id === values.roomId);
+      // Get room from first schedule entry (for backward compatibility)
+      const firstScheduleRoom = schedules.length > 0 ? schedules[0]["Phòng học"] : "";
+      const selectedRoom = rooms.find((r) => r.id === firstScheduleRoom);
 
       const classData = {
         "Tên lớp": values.className,
@@ -243,7 +249,7 @@ const ClassFormModal = ({
         "Học sinh": editingClass?.["Học sinh"] || [],
         "Student IDs": editingClass?.["Student IDs"] || [],
         "Lịch học": schedules,
-        "Phòng học": values.roomId || "",
+        "Phòng học": firstScheduleRoom || "",
         "Địa điểm": selectedRoom ? `${selectedRoom["Địa điểm"]} - ${selectedRoom["Tên phòng"]}` : "",
         "Học phí mỗi buổi": values.tuitionPerSession || 0,
         "Lương GV": values.teacherSalary || 0,
@@ -351,28 +357,6 @@ const ClassFormModal = ({
         </Form.Item>
 
         <Form.Item 
-          name="roomId" 
-          label="Phòng học"
-        >
-          <Select
-            placeholder="Chọn phòng học"
-            loading={loadingRooms}
-            showSearch
-            optionFilterProp="children"
-            filterOption={(input, option) =>
-              (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
-            }
-            options={[
-              { value: "", label: "Trống (Không có phòng)" },
-              ...rooms.map((room) => ({
-                value: room.id,
-                label: `${room["Tên phòng"]} - ${room["Địa điểm"]}`,
-              })),
-            ]}
-          />
-        </Form.Item>
-
-        <Form.Item 
           name="tuitionPerSession" 
           label="Học phí mỗi buổi"
           rules={[{ required: true, message: "Vui lòng nhập học phí" }]}
@@ -436,6 +420,15 @@ const ClassFormModal = ({
                     </Form.Item>
                     <Form.Item
                       {...restField}
+                      name={[name, "className"]}
+                    >
+                      <Input 
+                        placeholder="Tên lớp" 
+                        style={{ width: 150 }}
+                      />
+                    </Form.Item>
+                    <Form.Item
+                      {...restField}
                       name={[name, "startTime"]}
                       rules={[{ required: true, message: "Chọn giờ bắt đầu" }]}
                     >
@@ -447,6 +440,27 @@ const ClassFormModal = ({
                       rules={[{ required: true, message: "Chọn giờ kết thúc" }]}
                     >
                       <TimePicker format="HH:mm" placeholder="Giờ kết thúc" />
+                    </Form.Item>
+                    <Form.Item
+                      {...restField}
+                      name={[name, "room"]}
+                    >
+                      <Select 
+                        placeholder="Phòng học" 
+                        style={{ width: 180 }}
+                        allowClear
+                        showSearch
+                        filterOption={(input, option) =>
+                          (option?.label ?? '').toLowerCase().includes(input.toLowerCase())
+                        }
+                        options={[
+                          { value: "", label: "Không chọn" },
+                          ...rooms.map((room) => ({
+                            value: room.id,
+                            label: `${room["Tên phòng"]}`,
+                          })),
+                        ]}
+                      />
                     </Form.Item>
                     <MinusCircleOutlined onClick={() => remove(name)} />
                   </Space>

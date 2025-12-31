@@ -40,6 +40,7 @@ import {
   MoreOutlined,
   FileTextOutlined,
   DollarOutlined,
+  StarOutlined,
 } from "@ant-design/icons";
 import dayjs from "dayjs";
 import WrapperContent from "@/components/WrapperContent";
@@ -53,10 +54,51 @@ import { subjectMap, subjectOptions, studentGradeOptions } from "@/utils/selectO
 const { TabPane } = Tabs;
 const { Text } = Typography;
 
+// Component for editable stars input
+const StarsInput: React.FC<{
+  value: number;
+  student: Student;
+  onSave: (newValue: number) => void;
+}> = ({ value, student, onSave }) => {
+  const [localValue, setLocalValue] = useState<number>(value);
+
+  useEffect(() => {
+    setLocalValue(value);
+  }, [value]);
+
+  const handleBlur = () => {
+    if (localValue !== value && localValue !== null && localValue !== undefined) {
+      onSave(localValue);
+    }
+  };
+
+  return (
+    <InputNumber
+      min={0}
+      step={1}
+      value={localValue}
+      onChange={(newValue) => {
+        if (newValue !== null && newValue !== undefined) {
+          setLocalValue(newValue);
+        }
+      }}
+      onBlur={handleBlur}
+      onPressEnter={(e) => {
+        e.currentTarget.blur();
+      }}
+      addonAfter="⭐"
+      style={{ width: "100%" }}
+      onFocus={(e) => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
+    />
+  );
+};
+
 const STUDENT_LIST_URL = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh.json`;
 const SCHEDULE_URL = `${DATABASE_URL_BASE}/datasheet/Th%E1%BB%9Di_kho%C3%A1_bi%E1%BB%83u.json`;
 const ATTENDANCE_SESSIONS_URL = `${DATABASE_URL_BASE}/datasheet/%C4%90i%E1%BB%83m_danh_sessions.json`;
 const EXTENSION_HISTORY_URL = `${DATABASE_URL_BASE}/datasheet/Gia_h%E1%BA%A1n.json`;
+const STARS_HISTORY_URL = `${DATABASE_URL_BASE}/datasheet/L%E1%BB%8Bch_s%E1%BB%AD_sao_th%C6%B0%E1%BB%9Fng.json`;
 
 interface Student {
   id: string;
@@ -96,17 +138,23 @@ const StudentListView: React.FC = () => {
   const [editingExtension, setEditingExtension] = useState<any | null>(null);
   const [activeTab, setActiveTab] = useState("list");
   const [isClassModalOpen, setClassModalOpen] = useState(false);
-  const [selectedStudentClasses, setSelectedStudentClasses] = useState<Array<{className: string, subject: string}>>([]);
+  const [selectedStudentClasses, setSelectedStudentClasses] = useState<Array<{ className: string, subject: string }>>([]);
   const [classes, setClasses] = useState<any[]>([]);
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
   const [dateRangeFilter, setDateRangeFilter] = useState<[dayjs.Dayjs | null, dayjs.Dayjs | null] | null>(null);
   const [quickFilter, setQuickFilter] = useState<'month' | 'week' | 'year' | 'custom'>('month');
   const [subjectFilter, setSubjectFilter] = useState<string | null>(null);
 
+  // Stars editing states
+  const [isEditStarsModalOpen, setEditStarsModalOpen] = useState(false);
+  const [editingStarsStudent, setEditingStarsStudent] = useState<Student | null>(null);
+  const [starsHistory, setStarsHistory] = useState<any[]>([]);
+
   // Form instances
   const [editStudentForm] = Form.useForm();
   const [extendHoursForm] = Form.useForm();
   const [editExtensionForm] = Form.useForm();
+  const [editStarsForm] = Form.useForm();
 
   // Fetch students
   useEffect(() => {
@@ -250,6 +298,52 @@ const StudentListView: React.FC = () => {
     fetchClasses();
   }, []);
 
+  // Fetch stars history
+  useEffect(() => {
+    const fetchStarsHistory = async () => {
+      try {
+        const response = await fetch(
+          `${STARS_HISTORY_URL}?_=${new Date().getTime()}`,
+          {
+            cache: "no-cache",
+          }
+        );
+
+        // If response is not ok or returns null, initialize empty array
+        if (!response.ok) {
+          console.log("⭐ Stars history table not found, initializing empty array");
+          setStarsHistory([]);
+          return;
+        }
+
+        const data = await response.json();
+        if (data && typeof data === 'object' && Object.keys(data).length > 0) {
+          const historyArray = Object.keys(data).map((key) => ({
+            id: key,
+            ...data[key],
+          }));
+          // Sort by timestamp descending
+          historyArray.sort(
+            (a, b) =>
+              new Date(b.Timestamp || 0).getTime() -
+              new Date(a.Timestamp || 0).getTime()
+          );
+          console.log("⭐ Stars history fetched:", historyArray.length);
+          setStarsHistory(historyArray);
+        } else {
+          console.log("⭐ No stars history data, initializing empty array");
+          setStarsHistory([]);
+        }
+      } catch (error) {
+        console.log("⭐ Error fetching stars history (table may not exist yet):", error);
+        // Initialize with empty array so the feature still works
+        setStarsHistory([]);
+      }
+    };
+    fetchStarsHistory();
+  }, []);
+
+
   // Update edit student form when editingStudent changes
   useEffect(() => {
     if (editingStudent && isEditModalOpen) {
@@ -302,6 +396,21 @@ const StudentListView: React.FC = () => {
     }
   }, [editingExtension, isEditExtensionModalOpen, editExtensionForm]);
 
+  // Update edit stars form when editingStarsStudent changes
+  useEffect(() => {
+    if (editingStarsStudent && isEditStarsModalOpen) {
+      const currentTotal = calculateTotalRewardStars(editingStarsStudent.id);
+      editStarsForm.setFieldsValue({
+        currentTotal: currentTotal,
+        adjustment: 0,
+        reason: "",
+      });
+    } else if (!editingStarsStudent && isEditStarsModalOpen) {
+      editStarsForm.resetFields();
+    }
+  }, [editingStarsStudent, isEditStarsModalOpen, editStarsForm, starsHistory]);
+
+
   // Calculate total extended hours from Gia_hạn table
   const calculateTotalExtendedHours = (studentId: string): number => {
     let total = 0;
@@ -310,6 +419,30 @@ const StudentListView: React.FC = () => {
         total += Number(record["Giờ nhập thêm"]) || 0;
       }
     });
+    return total;
+  };
+
+  // Calculate total reward stars for a student
+  const calculateTotalRewardStars = (studentId: string): number => {
+    let total = 0;
+
+    // Sum stars from attendance sessions
+    attendanceSessions.forEach((session) => {
+      const studentRecord = session["Điểm danh"]?.find(
+        (record: any) => record["Student ID"] === studentId
+      );
+      if (studentRecord && studentRecord["Điểm thưởng"]) {
+        total += Number(studentRecord["Điểm thưởng"]) || 0;
+      }
+    });
+
+    // Add adjustments from stars history
+    starsHistory.forEach((record) => {
+      if (record.studentId === studentId) {
+        total += Number(record["Thay đổi"]) || 0;
+      }
+    });
+
     return total;
   };
 
@@ -381,9 +514,9 @@ const StudentListView: React.FC = () => {
   };
 
   // Get unique classes for a student with subject info from Lớp_học table
-  const getStudentClasses = (studentId: string): Array<{className: string, subject: string}> => {
-    const studentClasses: Array<{className: string, subject: string}> = [];
-    
+  const getStudentClasses = (studentId: string): Array<{ className: string, subject: string }> => {
+    const studentClasses: Array<{ className: string, subject: string }> = [];
+
     // Find all classes where this student is enrolled
     classes.forEach((classInfo) => {
       const studentIds = classInfo["Student IDs"] || [];
@@ -395,7 +528,7 @@ const StudentListView: React.FC = () => {
         });
       }
     });
-    
+
     return studentClasses;
   };
 
@@ -483,12 +616,12 @@ const StudentListView: React.FC = () => {
         // Calculate date range from selected month
         let fromDate: Date | undefined;
         let toDate: Date | undefined;
-        
+
         if (selectedMonth) {
           fromDate = selectedMonth.startOf('month').toDate();
           toDate = selectedMonth.endOf('month').toDate();
         }
-        
+
         const stats = calculateStudentHours(
           student.id, // Use student ID instead of name
           fromDate,
@@ -505,11 +638,15 @@ const StudentListView: React.FC = () => {
           hoursExtendedFromHistory - totalStudiedHours
         );
 
+        // Calculate total reward stars
+        const totalStars = calculateTotalRewardStars(student.id);
+
         return {
           ...student,
           ...stats,
           hoursExtended: hoursExtendedFromHistory, // Override với giá trị từ bảng Gia_hạn
           hoursRemaining: hoursRemaining,
+          totalStars: totalStars,
         };
       })
       .filter((student) => {
@@ -528,6 +665,7 @@ const StudentListView: React.FC = () => {
     selectedMonth,
     searchTerm,
     extensionHistory,
+    starsHistory,
     userProfile,
     currentUser,
   ]);
@@ -585,7 +723,7 @@ const StudentListView: React.FC = () => {
       message.warning("Vui lòng chọn ít nhất một học sinh để xóa");
       return;
     }
-    
+
     Modal.confirm({
       title: "Xóa nhiều học sinh",
       content: `Bạn có chắc chắn muốn xóa ${selectedRowKeys.length} học sinh đã chọn?`,
@@ -605,7 +743,7 @@ const StudentListView: React.FC = () => {
               method: "DELETE",
             });
           }
-          
+
           setStudents(students.filter((s) => !selectedRowKeys.includes(s.id)));
           setSelectedRowKeys([]);
           message.success(`Đã xóa ${selectedRowKeys.length} học sinh`);
@@ -651,52 +789,52 @@ const StudentListView: React.FC = () => {
           response.statusText
         );
 
-          if (response.ok) {
+        if (response.ok) {
           const data = await response.json();
           console.log("✅ Student added to Firebase:", data);
           const newStudent = { id: data.name, ...dataWithoutId } as Student;
           setStudents([...students, newStudent]);
           setEditModalOpen(false);
           setEditingStudent(null);
-            message.success("Thêm học sinh thành công!");
+          message.success("Thêm học sinh thành công!");
 
-            // If selected classes provided, add this student to those classes
-            if (selectedClassIds && selectedClassIds.length > 0) {
-              try {
-                const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
-                for (const classId of selectedClassIds) {
-                  const cls = classes.find((c) => c.id === classId);
-                  if (!cls) continue;
-                  const currentIds = Array.isArray(cls["Student IDs"]) ? cls["Student IDs"] : [];
-                  if (!currentIds.includes(newStudent.id)) {
-                    const updatedIds = [...currentIds, newStudent.id];
-                    const currentEnrollments = cls["Student Enrollments"] || {};
-                    const updatedEnrollments = { 
-                      ...currentEnrollments,
-                      [newStudent.id]: { enrollmentDate: today }
-                    };
-                    const url = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
-                    await fetch(url, {
-                      method: "PATCH",
-                      headers: { "Content-Type": "application/json" },
-                      body: JSON.stringify({ 
-                        "Student IDs": updatedIds,
-                        "Student Enrollments": updatedEnrollments
-                      }),
-                    });
-                  }
+          // If selected classes provided, add this student to those classes
+          if (selectedClassIds && selectedClassIds.length > 0) {
+            try {
+              const today = new Date().toISOString().split('T')[0]; // YYYY-MM-DD
+              for (const classId of selectedClassIds) {
+                const cls = classes.find((c) => c.id === classId);
+                if (!cls) continue;
+                const currentIds = Array.isArray(cls["Student IDs"]) ? cls["Student IDs"] : [];
+                if (!currentIds.includes(newStudent.id)) {
+                  const updatedIds = [...currentIds, newStudent.id];
+                  const currentEnrollments = cls["Student Enrollments"] || {};
+                  const updatedEnrollments = {
+                    ...currentEnrollments,
+                    [newStudent.id]: { enrollmentDate: today }
+                  };
+                  const url = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
+                  await fetch(url, {
+                    method: "PATCH",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({
+                      "Student IDs": updatedIds,
+                      "Student Enrollments": updatedEnrollments
+                    }),
+                  });
                 }
-                // Refresh classes locally
-                const resp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học.json`);
-                const clsData = await resp.json();
-                if (clsData) {
-                  const classesArray = Object.entries(clsData).map(([id, cls]: [string, any]) => ({ id, ...cls }));
-                  setClasses(classesArray);
-                }
-              } catch (err) {
-                console.error("Error updating class membership for new student:", err);
               }
+              // Refresh classes locally
+              const resp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học.json`);
+              const clsData = await resp.json();
+              if (clsData) {
+                const classesArray = Object.entries(clsData).map(([id, cls]: [string, any]) => ({ id, ...cls }));
+                setClasses(classesArray);
+              }
+            } catch (err) {
+              console.error("Error updating class membership for new student:", err);
             }
+          }
         } else {
           const errorText = await response.text();
           console.error(
@@ -907,6 +1045,89 @@ const StudentListView: React.FC = () => {
     setExtendingStudent(student);
     setExtendModalOpen(true);
   };
+
+  // Handle direct stars editing
+  const handleDirectStarsChange = async (student: Student, newTotal: number | null) => {
+    if (newTotal === null || newTotal === undefined) return;
+    
+    const currentTotal = calculateTotalRewardStars(student.id);
+    const adjustment = newTotal - currentTotal;
+    
+    // If no change, don't save
+    if (adjustment === 0) return;
+
+    try {
+      const now = new Date();
+      const starsRecord = {
+        studentId: student.id,
+        "Thay đổi": adjustment,
+        "Số sao trước": currentTotal,
+        "Số sao sau": newTotal,
+        "Lý do": "Chỉnh sửa trực tiếp",
+        "Người chỉnh sửa": userProfile?.displayName || currentUser?.email || "Admin",
+        "Ngày chỉnh sửa": now.toISOString().split("T")[0],
+        "Giờ chỉnh sửa": now.toTimeString().split(" ")[0],
+        "Loại thay đổi": "Điều chỉnh",
+        Timestamp: now.toISOString(),
+      };
+
+      const response = await fetch(STARS_HISTORY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(starsRecord),
+      });
+
+      if (response.ok) {
+        const refreshResponse = await fetch(
+          `${STARS_HISTORY_URL}?_=${new Date().getTime()}`,
+          { cache: "no-cache" }
+        );
+        const refreshData = await refreshResponse.json();
+        if (refreshData) {
+          const historyArray = Object.keys(refreshData).map((key) => ({
+            id: key,
+            ...refreshData[key],
+          }));
+          historyArray.sort(
+            (a, b) =>
+              new Date(b.Timestamp || 0).getTime() -
+              new Date(a.Timestamp || 0).getTime()
+          );
+          setStarsHistory(historyArray);
+        }
+        message.success(`Đã cập nhật số sao thưởng thành ${newTotal} ⭐`);
+      } else {
+        const errorText = await response.text();
+        console.error("❌ Failed to save stars:", response.status, errorText);
+        message.error("Không lưu được số sao thưởng");
+      }
+    } catch (error) {
+      console.error("❌ Error saving stars:", error);
+      message.error("Không lưu được số sao thưởng");
+    }
+  };
+
+  const handleEditStars = (student: Student) => {
+    console.log("🌟 handleEditStars called for student:", student["Họ và tên"]);
+    console.log("🌟 Student ID:", student.id);
+
+    setEditingStarsStudent(student);
+    const currentTotal = calculateTotalRewardStars(student.id);
+
+    console.log("🌟 Current total stars:", currentTotal);
+    console.log("🌟 Opening modal...");
+
+    editStarsForm.setFieldsValue({
+      currentTotal: currentTotal,
+      adjustment: 0,
+      reason: "",
+    });
+    setEditStarsModalOpen(true);
+
+    console.log("🌟 Modal state set to true");
+  };
+
+
 
   const handleEditExtension = (record: any) => {
     setEditingExtension(record);
@@ -1314,6 +1535,157 @@ const StudentListView: React.FC = () => {
     }
   };
 
+  // Handle saving stars adjustment
+  const handleSaveStars = async (adjustment: number, reason: string) => {
+    if (!editingStarsStudent) return;
+
+    try {
+      console.log("⭐ Saving stars adjustment:", {
+        studentId: editingStarsStudent.id,
+        studentName: editingStarsStudent["Họ và tên"],
+        adjustment,
+        reason,
+      });
+
+      const currentTotal = calculateTotalRewardStars(editingStarsStudent.id);
+      const newTotal = currentTotal + adjustment;
+
+      const now = new Date();
+      const starsRecord = {
+        studentId: editingStarsStudent.id,
+        "Thay đổi": adjustment,
+        "Số sao trước": currentTotal,
+        "Số sao sau": newTotal,
+        "Lý do": reason,
+        "Người chỉnh sửa": userProfile?.displayName || currentUser?.email || "Admin",
+        "Ngày chỉnh sửa": now.toISOString().split("T")[0],
+        "Giờ chỉnh sửa": now.toTimeString().split(" ")[0],
+        "Loại thay đổi": "Điều chỉnh",
+        Timestamp: now.toISOString(),
+      };
+
+      const response = await fetch(STARS_HISTORY_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(starsRecord),
+      });
+
+      if (response.ok) {
+        console.log("✅ Stars adjustment saved successfully");
+
+        const refreshResponse = await fetch(
+          `${STARS_HISTORY_URL}?_=${new Date().getTime()}`,
+          { cache: "no-cache" }
+        );
+        const refreshData = await refreshResponse.json();
+        if (refreshData) {
+          const historyArray = Object.keys(refreshData).map((key) => ({
+            id: key,
+            ...refreshData[key],
+          }));
+          historyArray.sort(
+            (a, b) =>
+              new Date(b.Timestamp || 0).getTime() -
+              new Date(a.Timestamp || 0).getTime()
+          );
+          setStarsHistory(historyArray);
+        }
+
+        setEditStarsModalOpen(false);
+        setEditingStarsStudent(null);
+        editStarsForm.resetFields();
+
+        message.success(
+          `Đã ${adjustment > 0 ? "thêm" : "trừ"} ${Math.abs(adjustment)} sao thưởng cho ${editingStarsStudent["Họ và tên"]}!\nTổng mới: ${newTotal} ⭐`
+        );
+      } else {
+        const errorText = await response.text();
+        console.error("❌ Failed to save stars:", response.status, errorText);
+        message.error(`Không lưu được điều chỉnh sao thưởng. Status: ${response.status}`);
+      }
+    } catch (error) {
+      console.error("❌ Error saving stars:", error);
+      message.error("Không lưu được điều chỉnh sao thưởng. Kiểm tra console để biết chi tiết.");
+    }
+  };
+
+  const handleResetStars = async () => {
+    if (!editingStarsStudent) return;
+
+    Modal.confirm({
+      title: "Xác nhận reset sao thưởng",
+      content: `Bạn có chắc chắn muốn reset tất cả sao thưởng của ${editingStarsStudent["Họ và tên"]} về 0?`,
+      okText: "Reset",
+      okType: "danger",
+      cancelText: "Hủy",
+      onOk: async () => {
+        try {
+          console.log("⭐ Resetting stars for:", editingStarsStudent.id);
+
+          const currentTotal = calculateTotalRewardStars(editingStarsStudent.id);
+
+          const now = new Date();
+          const resetRecord = {
+            studentId: editingStarsStudent.id,
+            "Thay đổi": -currentTotal,
+            "Số sao trước": currentTotal,
+            "Số sao sau": 0,
+            "Lý do": "Reset toàn bộ sao thưởng về 0",
+            "Người chỉnh sửa": userProfile?.displayName || currentUser?.email || "Admin",
+            "Ngày chỉnh sửa": now.toISOString().split("T")[0],
+            "Giờ chỉnh sửa": now.toTimeString().split(" ")[0],
+            "Loại thay đổi": "Reset",
+            Timestamp: now.toISOString(),
+          };
+
+          const response = await fetch(STARS_HISTORY_URL, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(resetRecord),
+          });
+
+          if (response.ok) {
+            console.log("✅ Stars reset successfully");
+
+            const refreshResponse = await fetch(
+              `${STARS_HISTORY_URL}?_=${new Date().getTime()}`,
+              { cache: "no-cache" }
+            );
+            const refreshData = await refreshResponse.json();
+            if (refreshData) {
+              const historyArray = Object.keys(refreshData).map((key) => ({
+                id: key,
+                ...refreshData[key],
+              }));
+              historyArray.sort(
+                (a, b) =>
+                  new Date(b.Timestamp || 0).getTime() -
+                  new Date(a.Timestamp || 0).getTime()
+              );
+              setStarsHistory(historyArray);
+            }
+
+            setEditStarsModalOpen(false);
+            setEditingStarsStudent(null);
+            editStarsForm.resetFields();
+
+            message.success(
+              `Đã reset sao thưởng của ${editingStarsStudent["Họ và tên"]} về 0!`
+            );
+          } else {
+            const errorText = await response.text();
+            console.error("❌ Failed to reset stars:", response.status, errorText);
+            message.error(`Không reset được sao thưởng. Status: ${response.status}`);
+          }
+        } catch (error) {
+          console.error("❌ Error resetting stars:", error);
+          message.error("Không reset được sao thưởng. Kiểm tra console để biết chi tiết.");
+        }
+      },
+    });
+  };
+
+
   const months = [
     "January",
     "February",
@@ -1366,11 +1738,11 @@ const StudentListView: React.FC = () => {
             ? "Đi muộn"
             : "Có mặt"
           : studentRecord["Vắng có phép"]
-          ? "Vắng có phép"
-          : "Vắng";
+            ? "Vắng có phép"
+            : "Vắng";
 
         tableRows += `
-          <tr>
+      < tr >
             <td>${new Date(session["Ngày"]).toLocaleDateString("vi-VN")}</td>
             <td>${student["Họ và tên"]}</td>
             <td>${attendance}</td>
@@ -1379,111 +1751,111 @@ const StudentListView: React.FC = () => {
             <td><strong>${studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-"}</strong></td>
             <td>${studentRecord["Điểm thưởng"] ?? "-"}</td>
             <td style="text-align: left;">${studentRecord["Ghi chú"] || "-"}</td>
-          </tr>
-        `;
+          </tr >
+  `;
       });
 
       tablesHTML += `
-        <div class="subject-header">Môn ${subject}</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Ngày</th>
-              <th>Tên HS</th>
-              <th>Chuyên cần</th>
-              <th>% BTVN</th>
-              <th>Tên bài kiểm tra</th>
-              <th>Điểm</th>
-              <th>Điểm thưởng</th>
-              <th>Nhận xét</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
-      `;
+  < div class="subject-header" > Môn ${subject}</div >
+    <table>
+      <thead>
+        <tr>
+          <th>Ngày</th>
+          <th>Tên HS</th>
+          <th>Chuyên cần</th>
+          <th>% BTVN</th>
+          <th>Tên bài kiểm tra</th>
+          <th>Điểm</th>
+          <th>Điểm thưởng</th>
+          <th>Nhận xét</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tableRows}
+      </tbody>
+    </table>
+`;
     });
 
     const htmlContent = `
-      <!DOCTYPE html>
-      <html>
-        <head>
-          <meta charset="UTF-8">
+  < !DOCTYPE html >
+    <html>
+      <head>
+        <meta charset="UTF-8">
           <title>Bảng điểm - ${student["Họ và tên"]}</title>
           <style>
             @page {
               size: A4 landscape;
-              margin: 15mm;
+            margin: 15mm;
             }
             body {
-              font-family: Arial, sans-serif;
-              padding: 20px;
+              font - family: Arial, sans-serif;
+            padding: 20px;
             }
             h1 {
-              text-align: center;
-              color: #1890ff;
-              margin-bottom: 10px;
+              text - align: center;
+            color: #1890ff;
+            margin-bottom: 10px;
             }
             h2 {
-              text-align: center;
-              color: #333;
-              margin-bottom: 20px;
+              text - align: center;
+            color: #333;
+            margin-bottom: 20px;
             }
             .info {
-              text-align: center;
-              margin-bottom: 20px;
-              color: #666;
+              text - align: center;
+            margin-bottom: 20px;
+            color: #666;
             }
             table {
               width: 100%;
-              border-collapse: collapse;
-              margin-bottom: 30px;
+            border-collapse: collapse;
+            margin-bottom: 30px;
             }
             th, td {
               border: 1px solid #000;
-              padding: 8px;
-              text-align: center;
-              font-size: 11px;
+            padding: 8px;
+            text-align: center;
+            font-size: 11px;
             }
             th {
               background: #f0f0f0;
-              font-weight: bold;
+            font-weight: bold;
             }
             .subject-header {
               background: #e6f7ff;
-              font-weight: bold;
-              font-size: 14px;
-              text-align: left;
-              padding: 10px;
-              margin-top: 20px;
-              border-left: 4px solid #1890ff;
+            font-weight: bold;
+            font-size: 14px;
+            text-align: left;
+            padding: 10px;
+            margin-top: 20px;
+            border-left: 4px solid #1890ff;
             }
             @media print {
               button {
-                display: none;
+              display: none;
               }
             }
           </style>
-        </head>
-        <body>
-          <h1>BẢNG ĐIỂM CHI TIẾT</h1>
-          <h2>Trung tâm Trí Tuệ 8+</h2>
-          <div class="info">
-            <p><strong>Học sinh:</strong> ${student["Họ và tên"]}</p>
-            <p>Ngày xuất: ${new Date().toLocaleDateString("vi-VN")} ${new Date().toLocaleTimeString("vi-VN")}</p>
-          </div>
-          
-          ${tablesHTML}
-          
-          <script>
-            window.onload = function() {
-              window.print();
+      </head>
+      <body>
+        <h1>BẢNG ĐIỂM CHI TIẾT</h1>
+        <h2>Trung tâm Trí Tuệ 8+</h2>
+        <div class="info">
+          <p><strong>Học sinh:</strong> ${student["Họ và tên"]}</p>
+          <p>Ngày xuất: ${new Date().toLocaleDateString("vi-VN")} ${new Date().toLocaleTimeString("vi-VN")}</p>
+        </div>
+
+        ${tablesHTML}
+
+        <script>
+          window.onload = function() {
+            window.print();
             };
-          </script>
-        </body>
-      </html>
-    `;
+        </script>
+      </body>
+    </html>
+`;
 
     printWindow.document.write(htmlContent);
     printWindow.document.close();
@@ -1520,314 +1892,307 @@ const StudentListView: React.FC = () => {
     );
 
     const reportHTML = `
-            <!DOCTYPE html>
-            <html>
-            <head>
-                <meta charset="UTF-8">
-                <title>Phiếu báo học tập - ${student["Họ và tên"]}</title>
-                <style>
-                    @page {
-                        size: A4 portrait;
-                        margin: 0.5cm;
+  < !DOCTYPE html >
+    <html>
+      <head>
+        <meta charset="UTF-8">
+          <title>Phiếu báo học tập - ${student["Họ và tên"]}</title>
+          <style>
+            @page {
+              size: A4 portrait;
+            margin: 0.5cm;
                     }
-                    @media print {
-                        body {
-                            margin: 0;
-                            font-size: 12pt;
+            @media print {
+              body {
+              margin: 0;
+            font-size: 12pt;
                         }
-                        h1 { font-size: 24pt !important; }
-                        .company-name { font-size: 16pt !important; }
-                        h2 { font-size: 16pt !important; }
-                        .info-label, .info-value { font-size: 13pt !important; }
-                        th, td {
-                            padding: 10px !important;
-                            font-size: 11pt !important;
+            h1 {font - size: 24pt !important; }
+            .company-name {font - size: 16pt !important; }
+            h2 {font - size: 16pt !important; }
+            .info-label, .info-value {font - size: 13pt !important; }
+            th, td {
+              padding: 10px !important;
+            font-size: 11pt !important;
                         }
                     }
-                    body {
-                        font-family: 'Arial', sans-serif;
-                        width: 100%;
-                        max-width: 20cm;
-                        margin: 0 auto;
-                        padding: 0.5cm;
-                        background: white;
-                        color: #000;
-                        font-size: 13pt;
+            body {
+              font - family: 'Arial', sans-serif;
+            width: 100%;
+            max-width: 20cm;
+            margin: 0 auto;
+            padding: 0.5cm;
+            background: white;
+            color: #000;
+            font-size: 13pt;
                     }
-                    .header {
-                        display: flex;
-                        align-items: flex-start;
-                        justify-content: space-between;
-                        border-bottom: 4px solid #36797f;
-                        padding-bottom: 20px;
-                        margin-bottom: 30px;
+            .header {
+              display: flex;
+            align-items: flex-start;
+            justify-content: space-between;
+            border-bottom: 4px solid #36797f;
+            padding-bottom: 20px;
+            margin-bottom: 30px;
                     }
-                    .logo { max-width: 140px; height: 140px; object-fit: contain; }
-                    .header-center { flex: 1; text-align: center; padding: 0 20px; }
-                    .header-right { text-align: right; min-width: 140px; }
-                    h1 {
-                        color: #36797f;
-                        margin: 15px 0 8px 0;
-                        font-size: 42px;
-                        font-weight: bold;
-                        text-transform: uppercase;
+            .logo {max - width: 140px; height: 140px; object-fit: contain; }
+            .header-center {flex: 1; text-align: center; padding: 0 20px; }
+            .header-right {text - align: right; min-width: 140px; }
+            h1 {
+              color: #36797f;
+            margin: 15px 0 8px 0;
+            font-size: 42px;
+            font-weight: bold;
+            text-transform: uppercase;
                     }
-                    .company-name {
-                        font-size: 28px;
-                        font-weight: bold;
-                        color: #000;
-                        margin: 5px 0;
+            .company-name {
+              font - size: 28px;
+            font-weight: bold;
+            color: #000;
+            margin: 5px 0;
                     }
-                    .month-year {
-                        font-size: 20px;
-                        color: #666;
-                        font-weight: normal;
+            .month-year {
+              font - size: 20px;
+            color: #666;
+            font-weight: normal;
                     }
-                    h2 {
-                        color: #36797f;
-                        font-size: 22px;
-                        margin-top: 35px;
-                        margin-bottom: 18px;
-                        font-weight: bold;
-                        text-transform: uppercase;
-                        border-bottom: 3px solid #36797f;
-                        padding-bottom: 8px;
+            h2 {
+              color: #36797f;
+            font-size: 22px;
+            margin-top: 35px;
+            margin-bottom: 18px;
+            font-weight: bold;
+            text-transform: uppercase;
+            border-bottom: 3px solid #36797f;
+            padding-bottom: 8px;
                     }
-                    .info-grid {
-                        display: grid;
-                        grid-template-columns: 1fr 1fr;
-                        gap: 20px;
-                        margin-bottom: 35px;
-                        padding: 0;
+            .info-grid {
+              display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+            margin-bottom: 35px;
+            padding: 0;
                     }
-                    .info-item { margin: 10px 0; }
-                    .info-label { font-weight: bold; color: #333; font-size: 18px; }
-                    .info-value { color: #000; font-size: 20px; }
-                    table {
-                        width: 100%;
-                        border-collapse: collapse;
-                        margin: 25px 0;
+            .info-item {margin: 10px 0; }
+            .info-label {font - weight: bold; color: #333; font-size: 18px; }
+            .info-value {color: #000; font-size: 20px; }
+            table {
+              width: 100%;
+            border-collapse: collapse;
+            margin: 25px 0;
                     }
-                    th, td {
-                        border: 2px solid #000;
-                        padding: 12px;
-                        text-align: left;
-                        font-size: 15px;
+            th, td {
+              border: 2px solid #000;
+            padding: 12px;
+            text-align: left;
+            font-size: 15px;
                     }
-                    th {
-                        background: #36797f;
-                        color: white;
-                        font-weight: bold;
-                        font-size: 16px;
+            th {
+              background: #36797f;
+            color: white;
+            font-weight: bold;
+            font-size: 16px;
                     }
-                    tr:nth-child(even) { background: #f9f9f9; }
-                    .summary {
-                        margin: 35px 0;
-                        padding: 0;
+            tr:nth-child(even) {background: #f9f9f9; }
+            .summary {
+              margin: 35px 0;
+            padding: 0;
                     }
-                    .summary-title {
-                        font-size: 24px;
-                        font-weight: bold;
-                        color: #36797f;
-                        text-transform: uppercase;
-                        margin-bottom: 25px;
-                        border-bottom: 3px solid #36797f;
-                        padding-bottom: 8px;
+            .summary-title {
+              font - size: 24px;
+            font-weight: bold;
+            color: #36797f;
+            text-transform: uppercase;
+            margin-bottom: 25px;
+            border-bottom: 3px solid #36797f;
+            padding-bottom: 8px;
                     }
-                    .summary-grid {
-                        display: grid;
-                        grid-template-columns: repeat(4, 1fr);
-                        gap: 25px;
-                        text-align: center;
+            .summary-grid {
+              display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 25px;
+            text-align: center;
                     }
-                    .summary-item {
-                        padding: 20px;
-                        border: 3px solid #ddd;
+            .summary-item {
+              padding: 20px;
+            border: 3px solid #ddd;
                     }
-                    .summary-value {
-                        font-size: 42px;
-                        font-weight: bold;
-                        color: #36797f;
+            .summary-value {
+              font - size: 42px;
+            font-weight: bold;
+            color: #36797f;
                     }
-                    .summary-label {
-                        color: #333;
-                        margin-top: 10px;
-                        font-size: 16px;
+            .summary-label {
+              color: #333;
+            margin-top: 10px;
+            font-size: 16px;
                     }
-                    .footer {
-                        margin-top: 60px;
-                        padding-top: 25px;
-                        border-top: 3px solid #36797f;
-                        display: grid;
-                        grid-template-columns: 1fr 1fr;
-                        gap: 50px;
+            .footer {
+              margin - top: 60px;
+            padding-top: 25px;
+            border-top: 3px solid #36797f;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 50px;
                     }
-                    .signature {
-                        text-align: center;
+            .signature {
+              text - align: center;
                     }
-                    .signature p {
-                        font-size: 18px;
-                        font-weight: bold;
+            .signature p {
+              font - size: 18px;
+            font-weight: bold;
                     }
-                    .signature-line {
-                        margin-top: 70px;
-                        padding-top: 5px;
-                        font-size: 15px;
+            .signature-line {
+              margin - top: 70px;
+            padding-top: 5px;
+            font-size: 15px;
                     }
-                </style>
-            </head>
-            <body>
-                <div class="header">
+          </style>
+      </head>
+      <body>
+        <div class="header">
 
           <span className="text-2xl text-white font-extrabold">Trí Tuệ 8+</span>
-                    <div class="header-center">
-                        <h1>BÁO CÁO HỌC THUẬT</h1>
-                        <p class="company-name">Trí Tuệ 8+</p>
-                    </div>
-                    <div class="header-right">
-                        <p class="month-year">${fromDate.toLocaleDateString(
-                          "vi-VN",
-                          { month: "long", year: "numeric" }
-                        )}</p>
-                        ${
-                          fromDate.getTime() !== toDate.getTime()
-                            ? `<p class="month-year">to ${toDate.toLocaleDateString(
-                                "vi-VN",
-                                { month: "short", day: "numeric" }
-                              )}</p>`
-                            : ""
-                        }
-                    </div>
-                </div>
+          <div class="header-center">
+            <h1>BÁO CÁO HỌC THUẬT</h1>
+            <p class="company-name">Trí Tuệ 8+</p>
+          </div>
+          <div class="header-right">
+            <p class="month-year">${fromDate.toLocaleDateString(
+      "vi-VN",
+      { month: "long", year: "numeric" }
+    )}</p>
+            ${fromDate.getTime() !== toDate.getTime()
+        ? `<p class="month-year">to ${toDate.toLocaleDateString(
+          "vi-VN",
+          { month: "short", day: "numeric" }
+        )}</p>`
+        : ""
+      }
+          </div>
+        </div>
 
-                <h2>Student Information</h2>
-                <div class="info-grid">
-                    <div class="info-item">
-                        <span class="info-label">Họ và tên:</span>
-                        <span class="info-value">${student["Họ và tên"]}</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Mã học sinh:</span>
-                        <span class="info-value">${
-                          student["Mã học sinh"] || "N/A"
-                        }</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Sinh nhật:</span>
-                        <span class="info-value">${
-                          student["Ngày sinh"] || "N/A"
-                        }</span>
-                    </div>
-                    <div class="info-item">
-                        <span class="info-label">Số điện thoại:</span>
-                        <span class="info-value">${
-                          student["Số điện thoại"] || "N/A"
-                        }</span>
-                    </div>
-                </div>
+        <h2>Student Information</h2>
+        <div class="info-grid">
+          <div class="info-item">
+            <span class="info-label">Họ và tên:</span>
+            <span class="info-value">${student["Họ và tên"]}</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Mã học sinh:</span>
+            <span class="info-value">${student["Mã học sinh"] || "N/A"
+      }</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Sinh nhật:</span>
+            <span class="info-value">${student["Ngày sinh"] || "N/A"
+      }</span>
+          </div>
+          <div class="info-item">
+            <span class="info-label">Số điện thoại:</span>
+            <span class="info-value">${student["Số điện thoại"] || "N/A"
+      }</span>
+          </div>
+        </div>
 
-                <div class="summary">
-                    <div class="summary-title">TÓM TẮT HỌC THUẬT</div>
-                    <div class="summary-grid">
-                        <div class="summary-item">
-                            <div class="summary-value">${
-                              totalHours.totalSessions
-                            }</div>
-                            <div class="summary-label">Môn đăng ký</div>
-                        </div>
-                        <div class="summary-item">
-                            <div class="summary-value">${totalHours.hours}h ${
-                              totalHours.minutes
-                            }m</div>
-                            <div class="summary-label">Tổng thời gian</div>
-                        </div>
-                        <div class="summary-item">
-                            <div class="summary-value">${hoursExtendedFromHistory.toFixed(
-                              2
-                            )}h</div>
-                            <div class="summary-label">Giờ mở rộng</div>
-                        </div>
-                        <div class="summary-item">
-                            <div class="summary-value">${hoursRemaining.toFixed(
-                              2
-                            )}h</div>
-                            <div class="summary-label">Giờ còn lại</div>
-                        </div>
-                    </div>
-                </div>
+        <div class="summary">
+          <div class="summary-title">TÓM TẮT HỌC THUẬT</div>
+          <div class="summary-grid">
+            <div class="summary-item">
+              <div class="summary-value">${totalHours.totalSessions
+      }</div>
+              <div class="summary-label">Môn đăng ký</div>
+            </div>
+            <div class="summary-item">
+              <div class="summary-value">${totalHours.hours}h ${totalHours.minutes
+      }m</div>
+              <div class="summary-label">Tổng thời gian</div>
+            </div>
+            <div class="summary-item">
+              <div class="summary-value">${hoursExtendedFromHistory.toFixed(
+        2
+      )}h</div>
+              <div class="summary-label">Giờ mở rộng</div>
+            </div>
+            <div class="summary-item">
+              <div class="summary-value">${hoursRemaining.toFixed(
+        2
+      )}h</div>
+              <div class="summary-label">Giờ còn lại</div>
+            </div>
+          </div>
+        </div>
 
-                <h2>Chi tiết buổi học</h2>
-                <table>
-                    <thead>
-                        <tr>
-                            <th>#</th>
-                            <th>Ngày</th>
-                            <th>Thời gian</th>
-                            <th>Thời lượng</th>
-                            <th>Nội dung</th>
-                            <th>Giáo viên</th>
-                            <th>Nhận xét</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${events
-                          .map((event, index) => {
-                            const start = event["Giờ bắt đầu"];
-                            const end = event["Giờ kết thúc"];
-                            let duration = "-";
-                            if (start && end) {
-                              const [startH, startM] = start
-                                .split(":")
-                                .map(Number);
-                              const [endH, endM] = end.split(":").map(Number);
-                              const totalMinutes =
-                                endH * 60 + endM - (startH * 60 + startM);
-                              const hours = Math.floor(totalMinutes / 60);
-                              const minutes = totalMinutes % 60;
-                              duration =
-                                minutes > 0
-                                  ? hours + "h " + minutes + "p"
-                                  : hours + "h";
-                            }
-                            return `
+        <h2>Chi tiết buổi học</h2>
+        <table>
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Ngày</th>
+              <th>Thời gian</th>
+              <th>Thời lượng</th>
+              <th>Nội dung</th>
+              <th>Giáo viên</th>
+              <th>Nhận xét</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${events
+        .map((event, index) => {
+          const start = event["Giờ bắt đầu"];
+          const end = event["Giờ kết thúc"];
+          let duration = "-";
+          if (start && end) {
+            const [startH, startM] = start
+              .split(":")
+              .map(Number);
+            const [endH, endM] = end.split(":").map(Number);
+            const totalMinutes =
+              endH * 60 + endM - (startH * 60 + startM);
+            const hours = Math.floor(totalMinutes / 60);
+            const minutes = totalMinutes % 60;
+            duration =
+              minutes > 0
+                ? hours + "h " + minutes + "p"
+                : hours + "h";
+          }
+          return `
                             <tr>
                                 <td>${index + 1}</td>
                                 <td>${new Date(
-                                  event["Ngày"]
-                                ).toLocaleDateString("vi-VN")}</td>
+            event["Ngày"]
+          ).toLocaleDateString("vi-VN")}</td>
                                 <td>${start} - ${end}</td>
                                 <td style="font-weight: bold;">${duration}</td>
                                 <td>${event["Tên công việc"]}</td>
                                 <td>${event["Giáo viên phụ trách"]}</td>
-                                <td style="font-size: 11px; max-width: 250px;">${
-                                  event["Nhận xét"] || "-"
-                                }</td>
+                                <td style="font-size: 11px; max-width: 250px;">${event["Nhận xét"] || "-"
+            }</td>
                             </tr>
                             `;
-                          })
-                          .join("")}
-                    </tbody>
-                </table>
+        })
+        .join("")}
+          </tbody>
+        </table>
 
-                <div class="footer">
-                    <div class="signature">
-                        <p><strong>Giáo viên phụ trách</strong></p>
-                        <div class="signature-line">Chữ ký</div>
-                    </div>
-                    <div class="signature">
-                        <p><strong>Phụ huynh/Người giám hộ</strong></p>
-                        <div class="signature-line">Chữ ký</div>
-                    </div>
-                </div>
+        <div class="footer">
+          <div class="signature">
+            <p><strong>Giáo viên phụ trách</strong></p>
+            <div class="signature-line">Chữ ký</div>
+          </div>
+          <div class="signature">
+            <p><strong>Phụ huynh/Người giám hộ</strong></p>
+            <div class="signature-line">Chữ ký</div>
+          </div>
+        </div>
 
-                <p style="text-align: center; margin-top: 30px; color: #64748b; font-size: 12px;">
-                    Ngày in phiếu: ${new Date().toLocaleDateString(
-                      "vi-VN"
-                    )} - Trí Tuệ 8+
-                </p>
-            </body>
-            </html>
-        `;
+        <p style="text-align: center; margin-top: 30px; color: #64748b; font-size: 12px;">
+          Ngày in phiếu: ${new Date().toLocaleDateString(
+          "vi-VN"
+        )} - Trí Tuệ 8+
+        </p>
+      </body>
+    </html>
+`;
 
     printWindow.document.write(reportHTML);
     printWindow.document.close();
@@ -1863,815 +2228,845 @@ const StudentListView: React.FC = () => {
         ) : null
       }
     >
-      <Tabs
-        activeKey={activeTab}
-        onChange={setActiveTab}
-        size="large"
-        style={{ marginTop: -16 }}
-      >
-        {/* Tab 1: Danh sách học sinh */}
-        <TabPane
-          tab={
-            <span>
-              <UserOutlined />
-              Danh sách học sinh
-            </span>
-          }
-          key="list"
-        >
-          {/* Filters */}
-          {/* Search Box */}
+      {/* Removed Tabs - showing all content directly */}
+      <div>
+        {/* Filters */}
+        {/* Search Box */}
           <Card title="Tìm kiếm học sinh" className="mb-6">
-        <Input
-          placeholder="Nhập tên học sinh"
-          value={searchTerm}
-          onChange={(e) => setSearchTerm(e.target.value)}
-          prefix={<SearchOutlined />}
-          suffix={
-            searchTerm ? (
-              <Button
-                type="text"
-                icon={<ClearOutlined />}
-                onClick={() => setSearchTerm("")}
-                size="small"
-              />
-            ) : null
-          }
-        />
-        {searchTerm && (
-          <p className="mt-2 text-sm text-gray-600">
-            Tìm thấy{" "}
-            <span className="font-bold text-[#36797f]">
-              {displayStudents.length}
-            </span>{" "}
-            học sinh
-          </p>
-        )}
-      </Card>
-
-      <Card title="Bộ lọc" className="mb-6">
-        <div className="flex items-center gap-4">
-          <div className="flex-1">
-            <label className="block text-sm font-semibold text-gray-700 mb-2">
-              Chọn tháng
-            </label>
-            <DatePicker
-              picker="month"
-              value={selectedMonth}
-              onChange={(date) => setSelectedMonth(date)}
-              format="MM/YYYY"
-              placeholder="Chọn tháng"
-              className="w-full"
+            <Input
+              placeholder="Nhập tên học sinh"
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              prefix={<SearchOutlined />}
+              suffix={
+                searchTerm ? (
+                  <Button
+                    type="text"
+                    icon={<ClearOutlined />}
+                    onClick={() => setSearchTerm("")}
+                    size="small"
+                  />
+                ) : null
+              }
             />
-          </div>
-          <div className="pt-7">
-            <Button
-              onClick={() => setSelectedMonth(dayjs())}
-              icon={<ClearOutlined />}
-            >
-              Tháng hiện tại
-            </Button>
-          </div>
-        </div>
-      </Card>
+            {searchTerm && (
+              <p className="mt-2 text-sm text-gray-600">
+                Tìm thấy{" "}
+                <span className="font-bold text-[#36797f]">
+                  {displayStudents.length}
+                </span>{" "}
+                học sinh
+              </p>
+            )}
+          </Card>
 
-      {/* Students Table */}
-      {loading ? (
-        <div className="flex h-full items-center justify-center">
-          <Loader />
-        </div>
-      ) : (
-        <Card>
-          <Table
-            dataSource={displayStudents.map((student, index) => ({
-              key: student.id,
-              index: index + 1,
-              name: student["Họ và tên"],
-              grade: student["Khối"] || "-",
-              code: student["Mã học sinh"] || "-",
-              phone: student["Số điện thoại"] || "-",
-              parentPhone: student["SĐT phụ huynh"] || "-",
-              email: student["Email"] || "-",
-              hours: `${student.hours}h ${student.minutes}p`,
-              hoursExtended: `${student.hoursExtended || 0}h`,
-              hoursRemaining: `${student.hoursRemaining ? student.hoursRemaining.toFixed(2) : "0.00"}h`,
-              sessions: student.totalSessions,
-              student,
-            }))}
-            columns={[
-              {
-                title: "#",
-                dataIndex: "index",
-                key: "index",
-                width: 60,
-                align: "center",
-                fixed: "left",
-              },
-              {
-                title: "Họ và tên",
-                dataIndex: "name",
-                fixed: "left",
-                key: "name",
-                render: (text) => <strong>{text}</strong>,
-              },
-              {
-                title: "Khối",
-                dataIndex: "grade",
-                key: "grade",
-                width: 100,
-                render: (text) => text || "-",
-              },
-              {
-                title: "Mã học sinh",
-                dataIndex: "code",
-                key: "code",
-                width: 120,
-              },
-              {
-                title: "SĐT HS",
-                dataIndex: "phone",
-                key: "phone",
-                width: 120,
-              },
-              {
-                title: "SĐT phụ huynh",
-                dataIndex: "parentPhone",
-                key: "parentPhone",
-                width: 120,
-              },
-              {
-                title: "Email",
-                dataIndex: "email",
-                key: "email",
-              },
-              {
-                title: "Môn đăng ký",
-                dataIndex: "sessions",
-                key: "sessions",
-                align: "center",
-                render: (sessions, record) => {
-                  const classes = getStudentClasses(record.student.id);
-                  return (
-                    <Tag 
-                      color="purple" 
-                      style={{ cursor: 'pointer' }}
-                      onClick={() => handleShowClasses(record.student.id, record.name)}
-                    >
-                      {classes.length} lớp
-                    </Tag>
-                  );
-                },
-              },
-              {
-                title: "Cài đặt",
-                key: "actions",
-                align: "center",
-                fixed: "right",
-                width: 150,
-                render: (_, record) => (
-                  <Space size={4}>
-                    <Dropdown
-                      menu={{
-                        items: [
-                          {
-                            key: "view",
-                            label: "Xem chi tiết",
-                            icon: <EyeOutlined />,
-                            onClick: () => handleStudentClick(record.student),
-                          },
-                          {
-                            type: "divider",
-                          },
-                          {
-                            key: "edit",
-                            label: "Chỉnh sửa",
-                            icon: <EditOutlined />,
-                            onClick: () => {
-                              // Create a synthetic event to satisfy the function signature
-                              const syntheticEvent = {
-                                stopPropagation: () => {},
-                              } as React.MouseEvent;
-                              handleEditStudent(syntheticEvent, record.student);
-                            },
-                          },
-                        ],
-                      }}
-                      trigger={["click"]}
-                    >
-                      <Button
-                        type="text"
-                        icon={<MoreOutlined />}
-                        size="small"
-                      />
-                    </Dropdown>
-                    <Popconfirm
-                      title="Xóa học sinh"
-                      description={`Bạn có chắc chắn muốn xóa học sinh "${record.student["Họ và tên"]}" không?`}
-                      onConfirm={(e) => {
-                        const syntheticEvent = {
-                          stopPropagation: () => {},
-                        } as React.MouseEvent;
-                        handleDeleteStudent(syntheticEvent, record.student);
-                      }}
-                      okText="Xóa"
-                      cancelText="Hủy"
-                      okButtonProps={{ danger: true }}
-                    >
-                      <Button
-                        type="text"
-                        danger
-                        icon={<DeleteOutlined />}
-                        size="small"
-                      />
-                    </Popconfirm>
-                    <StudentReportButton
-                      student={record.student}
-                      type="link"
-                      size="small"
-                    />
-                  </Space>
-                ),
-              },
-            ]}
-            rowSelection={{
-              selectedRowKeys,
-              onChange: setSelectedRowKeys,
-              getCheckboxProps: (record) => ({
-                name: record.student.id,
-              }),
-            }}
-            pagination={{ pageSize: 10, showSizeChanger: false }}
-            scroll={{ x: 1200 }}
-          />
-        </Card>
-      )}
-
-      {/* Student Detail Modal */}
-      <Modal
-        title={
-          selectedStudent ? (
+          <Card title="Bộ lọc" className="mb-6">
             <div className="flex items-center gap-4">
-              <div>
-                <h2 className="text-xl font-bold text-primary">
-                  {selectedStudent["Họ và tên"]}
-                </h2>
-                <p className="text-primary text-sm">
-                  Hồ sơ học sinh & báo cáo học tập
-                </p>
+              <div className="flex-1">
+                <label className="block text-sm font-semibold text-gray-700 mb-2">
+                  Chọn tháng
+                </label>
+                <DatePicker
+                  picker="month"
+                  value={selectedMonth}
+                  onChange={(date) => setSelectedMonth(date)}
+                  format="MM/YYYY"
+                  placeholder="Chọn tháng"
+                  className="w-full"
+                />
+              </div>
+              <div className="pt-7">
+                <Button
+                  onClick={() => setSelectedMonth(dayjs())}
+                  icon={<ClearOutlined />}
+                >
+                  Tháng hiện tại
+                </Button>
               </div>
             </div>
-          ) : null
-        }
-        open={isModalOpen}
-        onCancel={() => setModalOpen(false)}
-        footer={null}
-        width={1000}
-        style={{ top: 20 }}
-      >
-        {selectedStudent && (
-          <div className="p-6">
-            {(() => {
-              // Tính các thống kê từ attendance sessions
-              const studentSessions = attendanceSessions.filter((session) =>
-                session["Điểm danh"]?.some(
-                  (record: any) => record["Student ID"] === selectedStudent.id
-                )
-              );
+          </Card>
 
-              // Tính phần trăm BTVN trung bình
-              let totalHomeworkPercent = 0;
-              let homeworkCount = 0;
-              studentSessions.forEach((session) => {
-                const record = session["Điểm danh"]?.find(
-                  (r: any) => r["Student ID"] === selectedStudent.id
-                );
-                if (record && record["% Hoàn thành BTVN"] !== undefined && record["% Hoàn thành BTVN"] !== null) {
-                  totalHomeworkPercent += Number(record["% Hoàn thành BTVN"]) || 0;
-                  homeworkCount++;
-                }
-              });
-              const avgHomeworkPercent = homeworkCount > 0 
-                ? (totalHomeworkPercent / homeworkCount).toFixed(1) 
-                : "0";
-
-              // Tính tổng điểm thưởng
-              let totalBonusPoints = 0;
-              studentSessions.forEach((session) => {
-                const record = session["Điểm danh"]?.find(
-                  (r: any) => r["Student ID"] === selectedStudent.id
-                );
-                if (record && record["Điểm thưởng"]) {
-                  totalBonusPoints += Number(record["Điểm thưởng"]) || 0;
-                }
-              });
-
-              // Tính trung bình điểm kiểm tra
-              let totalTestScores = 0;
-              let testCount = 0;
-              studentSessions.forEach((session) => {
-                const record = session["Điểm danh"]?.find(
-                  (r: any) => r["Student ID"] === selectedStudent.id
-                );
-                if (record) {
-                  const testScore = record["Điểm kiểm tra"] ?? record["Điểm"];
-                  if (testScore !== undefined && testScore !== null) {
-                    totalTestScores += Number(testScore) || 0;
-                    testCount++;
-                  }
-                }
-              });
-              const avgTestScore = testCount > 0 
-                ? (totalTestScores / testCount).toFixed(1) 
-                : "0";
-
-              return (
-                <div>
-                  {/* Quick Stats */}
-                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
-                    <Card className="border-l-4 border-[#36797f]">
-                      <Statistic
-                        title={
-                          <span className="text-[#36797f] text-xs font-semibold uppercase tracking-wide">
-                            Trung bình điểm kiểm tra
-                          </span>
-                        }
-                        value={avgTestScore}
-                        valueStyle={{
-                          color: "#36797f",
-                          fontSize: "24px",
-                          fontWeight: "bold",
-                        }}
-                      />
-                    </Card>
-                    <Card className="border-l-4 border-[#36797f]">
-                      <Statistic
-                        title={
-                          <span className="text-[#36797f] text-xs font-semibold uppercase tracking-wide">
-                            Tổng buổi học
-                          </span>
-                        }
-                        value={selectedStudent.totalSessions}
-                        valueStyle={{
-                          color: "#36797f",
-                          fontSize: "24px",
-                          fontWeight: "bold",
-                        }}
-                      />
-                    </Card>
-                    <Card className="border-l-4 border-green-600">
-                      <Statistic
-                        title={
-                          <span className="text-green-600 text-xs font-semibold uppercase tracking-wide">
-                            Phần trăm BTVN trung bình
-                          </span>
-                        }
-                        value={`${avgHomeworkPercent}%`}
-                        valueStyle={{
-                          color: "#16a34a",
-                          fontSize: "24px",
-                          fontWeight: "bold",
-                        }}
-                      />
-                    </Card>
-                    <Card className="border-l-4 border-[#36797f]">
-                      <Statistic
-                        title={
-                          <span className="text-[#36797f] text-xs font-semibold uppercase tracking-wide">
-                            Tổng điểm thưởng
-                          </span>
-                        }
-                        value={totalBonusPoints.toFixed(1)}
-                        valueStyle={{
-                          color: "#36797f",
-                          fontSize: "24px",
-                          fontWeight: "bold",
-                        }}
-                      />
-                    </Card>
-                  </div>
-
-                  {/* Student Info */}
-                  <Card
-                    className="mb-6"
-                    style={{ borderColor: "#36797f", borderWidth: "2px" }}
-                  >
-                    <Typography.Title
-                      level={4}
-                      style={{
-                        color: "#36797f",
-                        marginBottom: "16px",
-                        borderBottom: "2px solid #36797f",
-                        paddingBottom: "8px",
-                      }}
-                    >
-                      Thông tin cá nhân
-                    </Typography.Title>
-                    <Row gutter={[24, 8]}>
-                      {selectedStudent["Mã học sinh"] && (
-                        <Col span={12}>
-                          <div className="flex items-baseline gap-2">
-                            <Typography.Text
-                              strong
-                              style={{ minWidth: "110px" }}
-                            >
-                              Mã học sinh:
-                            </Typography.Text>
-                            <Typography.Text
-                              style={{ color: "#36797f", fontWeight: "bold" }}
-                            >
-                              {selectedStudent["Mã học sinh"]}
-                            </Typography.Text>
-                          </div>
-                        </Col>
-                      )}
-                      {selectedStudent["Ngày sinh"] && (
-                        <Col span={12}>
-                          <div className="flex items-baseline gap-2">
-                            <Typography.Text
-                              strong
-                              style={{ minWidth: "110px" }}
-                            >
-                              Ngày sinh:
-                            </Typography.Text>
-                            <Typography.Text
-                              style={{ color: "#36797f", fontWeight: "bold" }}
-                            >
-                              {selectedStudent["Ngày sinh"]}
-                            </Typography.Text>
-                          </div>
-                        </Col>
-                      )}
-                      {selectedStudent["Số điện thoại"] && (
-                        <Col span={12}>
-                          <div className="flex items-baseline gap-2">
-                            <Typography.Text
-                              strong
-                              style={{ minWidth: "110px" }}
-                            >
-                              Số điện thoại:
-                            </Typography.Text>
-                            <Typography.Text
-                              style={{ color: "#36797f", fontWeight: "bold" }}
-                            >
-                              {selectedStudent["Số điện thoại"]}
-                            </Typography.Text>
-                          </div>
-                        </Col>
-                      )}
-                      {selectedStudent["Email"] && (
-                        <Col span={12}>
-                          <div className="flex items-baseline gap-2">
-                            <Typography.Text
-                              strong
-                              style={{ minWidth: "110px" }}
-                            >
-                              Email:
-                            </Typography.Text>
-                            <Typography.Text
-                              style={{ color: "#36797f", fontWeight: "bold" }}
-                            >
-                              {selectedStudent["Email"]}
-                            </Typography.Text>
-                          </div>
-                        </Col>
-                      )}
-                    </Row>
-                  </Card>
-
-                  {/* Filter and Chart Section */}
-                  <Card
-                    className="mb-4"
-                    style={{ borderColor: "#36797f", borderWidth: "2px" }}
-                  >
-                    <Typography.Title
-                      level={4}
-                      style={{ color: "#36797f", marginBottom: "16px" }}
-                    >
-                      Bộ lọc và Biểu đồ
-                    </Typography.Title>
-                    
-                    {/* Quick Filter */}
-                    <div className="mb-4">
-                      <Typography.Text strong style={{ marginRight: "16px" }}>
-                        Bộ lọc nhanh:
-                      </Typography.Text>
-                      <Radio.Group
-                        value={quickFilter}
-                        onChange={(e) => {
-                          setQuickFilter(e.target.value);
-                          const now = dayjs();
-                          if (e.target.value === 'month') {
-                            setDateRangeFilter([now.startOf('month'), now.endOf('month')]);
-                          } else if (e.target.value === 'week') {
-                            setDateRangeFilter([now.startOf('isoWeek'), now.endOf('isoWeek')]);
-                          } else if (e.target.value === 'year') {
-                            setDateRangeFilter([now.startOf('year'), now.endOf('year')]);
-                          } else {
-                            setDateRangeFilter(null);
-                          }
-                        }}
-                      >
-                        <Radio.Button value="month">Theo tháng</Radio.Button>
-                        <Radio.Button value="week">Theo tuần</Radio.Button>
-                        <Radio.Button value="year">Theo năm</Radio.Button>
-                        <Radio.Button value="custom">Tùy chỉnh</Radio.Button>
-                      </Radio.Group>
-                    </div>
-
-                    {/* Date Range Picker */}
-                    <div className="mb-4">
-                      <Typography.Text strong style={{ marginRight: "16px" }}>
-                        Lọc theo ngày:
-                      </Typography.Text>
-                      <DatePicker.RangePicker
-                        value={dateRangeFilter}
-                        onChange={(dates) => {
-                          setDateRangeFilter(dates);
-                          if (dates) {
-                            setQuickFilter('custom');
-                          }
-                        }}
-                        format="DD/MM/YYYY"
-                        style={{ width: "300px" }}
-                      />
-                      {dateRangeFilter && (
-                        <Button
-                          type="link"
-                          icon={<ClearOutlined />}
-                          onClick={() => {
-                            setDateRangeFilter(null);
-                            setQuickFilter('month');
-                          }}
-                          style={{ marginLeft: "8px" }}
-                        >
-                          Xóa bộ lọc
-                        </Button>
-                      )}
-                    </div>
-
-                    {/* Subject Filter */}
-                    <div className="mb-4">
-                      <Typography.Text strong style={{ marginRight: "16px" }}>
-                        Lọc theo môn học:
-                      </Typography.Text>
-                      {(() => {
-                        // Get unique subjects from student's sessions
-                        const studentSessions = attendanceSessions.filter((session) =>
-                          session["Điểm danh"]?.some(
-                            (record: any) => record["Student ID"] === selectedStudent.id
-                          )
-                        );
-                        const uniqueSubjects = Array.from(
-                          new Set(
-                            studentSessions
-                              .map((s) => s["Tên lớp"]?.split(" - ")[0] || s["Môn học"] || "Chưa phân loại")
-                              .filter(Boolean)
-                          )
-                        ).sort();
-
-                        return (
-                          <Select
-                            value={subjectFilter}
-                            onChange={(value) => setSubjectFilter(value)}
-                            placeholder="Chọn môn học"
-                            allowClear
-                            style={{ width: "300px" }}
-                            options={[
-                              { label: "Tất cả môn học", value: null },
-                              ...uniqueSubjects.map((subject) => ({
-                                label: subject,
-                                value: subject,
-                              })),
-                            ]}
-                          />
-                        );
-                      })()}
-                      {subjectFilter && (
-                        <Button
-                          type="link"
-                          icon={<ClearOutlined />}
-                          onClick={() => setSubjectFilter(null)}
-                          style={{ marginLeft: "8px" }}
-                        >
-                          Xóa bộ lọc môn
-                        </Button>
-                      )}
-                    </div>
-
-                    {/* Charts */}
-                    {(() => {
-                      // Get filtered sessions
-                      let filteredSessions = attendanceSessions.filter((session) => {
-                        const hasAttendance = session["Điểm danh"]?.some(
-                          (record: any) => record["Student ID"] === selectedStudent.id
-                        );
-                        if (!hasAttendance) return false;
-                        if (!session["Ngày"]) return false;
-                        
-                        // Apply subject filter
-                        if (subjectFilter) {
-                          const sessionSubject = session["Tên lớp"]?.split(" - ")[0] || session["Môn học"] || "Chưa phân loại";
-                          if (sessionSubject !== subjectFilter) return false;
-                        }
-                        
-                        // Apply date filter
-                        if (dateRangeFilter && dateRangeFilter[0] && dateRangeFilter[1]) {
-                          const sessionDate = dayjs(session["Ngày"]);
-                          const startDate = dateRangeFilter[0].startOf('day');
-                          const endDate = dateRangeFilter[1].endOf('day');
-                          return (sessionDate.isAfter(startDate) || sessionDate.isSame(startDate)) && 
-                                 (sessionDate.isBefore(endDate) || sessionDate.isSame(endDate));
-                        }
-                        
-                        // Default to current month if no filter
-                        const now = dayjs();
-                        const sessionDate = dayjs(session["Ngày"]);
-                        const monthStart = now.startOf('month');
-                        const monthEnd = now.endOf('month');
-                        return (sessionDate.isAfter(monthStart) || sessionDate.isSame(monthStart)) && 
-                               (sessionDate.isBefore(monthEnd) || sessionDate.isSame(monthEnd));
-                      }).sort((a, b) => {
-                        const dateA = new Date(a["Ngày"]);
-                        const dateB = new Date(b["Ngày"]);
-                        return dateA.getTime() - dateB.getTime();
-                      });
-
-                      // Prepare chart data
-                      const chartData = {
-                        dates: filteredSessions.map(s => dayjs(s["Ngày"]).format("DD/MM")),
-                        homework: filteredSessions.map(s => {
-                          const record = s["Điểm danh"]?.find(
-                            (r: any) => r["Student ID"] === selectedStudent.id
-                          );
-                          const value = record?.["% Hoàn thành BTVN"];
-                          return value !== null && value !== undefined ? Number(value) : null;
-                        }),
-                        testScores: filteredSessions.map(s => {
-                          const record = s["Điểm danh"]?.find(
-                            (r: any) => r["Student ID"] === selectedStudent.id
-                          );
-                          const value = record?.["Điểm kiểm tra"] ?? record?.["Điểm"];
-                          return value !== null && value !== undefined ? Number(value) : null;
-                        }),
-                        bonusPoints: filteredSessions.map(s => {
-                          const record = s["Điểm danh"]?.find(
-                            (r: any) => r["Student ID"] === selectedStudent.id
-                          );
-                          const value = record?.["Điểm thưởng"];
-                          return value !== null && value !== undefined ? Number(value) : null;
-                        }),
-                      };
-
-                      // Debug log
-                      console.log("📊 Chart Data:", {
-                        filteredSessionsCount: filteredSessions.length,
-                        dates: chartData.dates,
-                        homework: chartData.homework,
-                        testScores: chartData.testScores,
-                        bonusPoints: chartData.bonusPoints,
-                      });
-
-                      const chartOptions: ApexOptions = {
-                        chart: {
-                          type: 'line',
-                          height: 350,
-                          toolbar: { 
-                            show: true,
-                            tools: {
-                              download: true,
-                              selection: true,
-                              zoom: true,
-                              zoomin: true,
-                              zoomout: true,
-                              pan: true,
-                              reset: true,
-                            },
-                          },
-                        },
-                        stroke: {
-                          curve: 'smooth',
-                          width: 3,
-                        },
-                        xaxis: {
-                          categories: chartData.dates,
-                          title: { text: 'Ngày' },
-                        },
-                        yaxis: [
-                          {
-                            title: { text: '% BTVN / Điểm' },
-                            labels: {
-                              formatter: (value: number) => {
-                                return value !== null ? value.toFixed(1) : '';
-                              },
-                            },
-                          },
-                        ],
-                        legend: {
-                          position: 'top',
-                        },
-                        tooltip: {
-                          shared: true,
-                          intersect: false,
-                          y: {
-                            formatter: (value: number) => {
-                              return value !== null ? value.toFixed(1) : '-';
-                            },
-                          },
-                        },
-                        dataLabels: {
-                          enabled: false,
-                        },
-                        markers: {
-                          size: 4,
-                          hover: {
-                            size: 6,
-                          },
-                        },
-                      };
-
-                      // Check if there's any data to display
-                      const hasData = chartData.homework.some(v => v !== null) ||
-                                     chartData.testScores.some(v => v !== null) ||
-                                     chartData.bonusPoints.some(v => v !== null);
-
-                      if (!hasData || filteredSessions.length === 0) {
-                        return (
-                          <Empty
-                            description={
-                              filteredSessions.length === 0
-                                ? "Không có dữ liệu trong khoảng thời gian đã chọn"
-                                : "Không có dữ liệu điểm để hiển thị"
-                            }
-                          />
-                        );
+          {/* Students Table */}
+          {loading ? (
+            <div className="flex h-full items-center justify-center">
+              <Loader />
+            </div>
+          ) : (
+            <Card>
+              <Table
+                dataSource={displayStudents.map((student, index) => ({
+                  key: student.id,
+                  index: index + 1,
+                  name: student["Họ và tên"],
+                  grade: student["Khối"] || "-",
+                  code: student["Mã học sinh"] || "-",
+                  phone: student["Số điện thoại"] || "-",
+                  parentPhone: student["SĐT phụ huynh"] || "-",
+                  hours: `${student.hours}h ${student.minutes} p`,
+                  hoursExtended: `${student.hoursExtended || 0} h`,
+                  hoursRemaining: `${student.hoursRemaining ? student.hoursRemaining.toFixed(2) : "0.00"} h`,
+                  sessions: student.totalSessions,
+                  totalStars: student.totalStars || 0,
+                  student,
+                }))}
+                columns={[
+                  {
+                    title: "#",
+                    dataIndex: "index",
+                    key: "index",
+                    width: 60,
+                    align: "center",
+                    fixed: "left",
+                  },
+                  {
+                    title: "Họ và tên",
+                    dataIndex: "name",
+                    fixed: "left",
+                    key: "name",
+                    render: (text) => <strong>{text}</strong>,
+                  },
+                  {
+                    title: "Khối",
+                    dataIndex: "grade",
+                    key: "grade",
+                    width: 100,
+                    render: (text) => text || "-",
+                  },
+                  {
+                    title: "Mã học sinh",
+                    dataIndex: "code",
+                    key: "code",
+                    width: 120,
+                  },
+                  {
+                    title: "SĐT HS",
+                    dataIndex: "phone",
+                    key: "phone",
+                    width: 120,
+                  },
+                  {
+                    title: "SĐT phụ huynh",
+                    dataIndex: "parentPhone",
+                    key: "parentPhone",
+                    width: 120,
+                  },
+                  {
+                    title: "Môn đăng ký",
+                    dataIndex: "sessions",
+                    key: "sessions",
+                    align: "center",
+                    render: (sessions, record) => {
+                      const classes = getStudentClasses(record.student.id);
+                      if (classes.length === 0) {
+                        return <Tag>Chưa đăng ký</Tag>;
                       }
-
+                      // Get unique subjects
+                      const uniqueSubjects = Array.from(new Set(classes.map(c => c.subject)));
                       return (
-                        <div>
-                          <ReactApexChart
-                            options={{
-                              ...chartOptions,
-                              title: { 
-                                text: 'Biến thiên BTVN, Điểm kiểm tra và Điểm thưởng',
-                                style: {
-                                  fontSize: '16px',
-                                  fontWeight: 'bold',
+                        <Space size={4} wrap>
+                          {uniqueSubjects.map((subject, index) => (
+                            <Tag
+                              key={index}
+                              color="purple"
+                              style={{ cursor: 'pointer' }}
+                              onClick={() => handleShowClasses(record.student.id, record.name)}
+                            >
+                              {subject}
+                            </Tag>
+                          ))}
+                        </Space>
+                      );
+                    },
+                  },
+                  {
+                    title: "Số sao thưởng",
+                    dataIndex: "totalStars",
+                    key: "totalStars",
+                    align: "center",
+                    width: 150,
+                    render: (stars, record) => (
+                      <StarsInput
+                        value={stars || 0}
+                        student={record.student}
+                        onSave={(newValue) => handleDirectStarsChange(record.student, newValue)}
+                      />
+                    ),
+                  },
+                  {
+                    title: "Cài đặt",
+                    key: "actions",
+                    align: "center",
+                    fixed: "right",
+                    width: 150,
+                    render: (_, record) => (
+                      <Space size={4}>
+                        <Dropdown
+                          menu={{
+                            items: [
+                              {
+                                key: "view",
+                                label: "Xem chi tiết",
+                                icon: <EyeOutlined />,
+                                onClick: () => handleStudentClick(record.student),
+                              },
+                              {
+                                type: "divider",
+                              },
+                              {
+                                key: "edit",
+                                label: "Chỉnh sửa",
+                                icon: <EditOutlined />,
+                                onClick: () => {
+                                  // Create a synthetic event to satisfy the function signature
+                                  const syntheticEvent = {
+                                    stopPropagation: () => { },
+                                  } as React.MouseEvent;
+                                  handleEditStudent(syntheticEvent, record.student);
                                 },
                               },
-                            }}
-                            series={[
-                              {
-                                name: '% BTVN',
-                                data: chartData.homework,
-                                color: '#16a34a',
-                              },
-                              {
-                                name: 'Điểm kiểm tra',
-                                data: chartData.testScores,
-                                color: '#36797f',
-                              },
-                              {
-                                name: 'Điểm thưởng',
-                                data: chartData.bonusPoints,
-                                color: '#fa8c16',
-                              },
-                            ]}
-                            type="line"
-                            height={350}
+                            ],
+                          }}
+                          trigger={["click"]}
+                        >
+                          <Button
+                            type="text"
+                            icon={<MoreOutlined />}
+                            size="small"
                           />
-                        </div>
-                      );
-                    })()}
-                  </Card>
+                        </Dropdown>
+                        <Popconfirm
+                          title="Xóa học sinh"
+                          description={`Bạn có chắc chắn muốn xóa học sinh "${record.student["Họ và tên"]}" không ? `}
+                          onConfirm={(e) => {
+                            const syntheticEvent = {
+                              stopPropagation: () => { },
+                            } as React.MouseEvent;
+                            handleDeleteStudent(syntheticEvent, record.student);
+                          }}
+                          okText="Xóa"
+                          cancelText="Hủy"
+                          okButtonProps={{ danger: true }}
+                        >
+                          <Button
+                            type="text"
+                            danger
+                            icon={<DeleteOutlined />}
+                            size="small"
+                          />
+                        </Popconfirm>
+                        <StudentReportButton
+                          student={record.student}
+                          type="link"
+                          size="small"
+                        />
+                      </Space>
+                    ),
+                  },
+                ]}
+                rowSelection={{
+                  selectedRowKeys,
+                  onChange: setSelectedRowKeys,
+                  getCheckboxProps: (record) => ({
+                    name: record.student.id,
+                  }),
+                }}
+                pagination={{ pageSize: 10, showSizeChanger: false }}
+                scroll={{ x: 1200 }}
+              />
+            </Card>
+          )}
 
-                  {/* Score Table */}
-                  <Card
-                    className="mb-4"
-                    style={{ borderColor: "#36797f", borderWidth: "2px" }}
-                  >
-                    <div className="flex items-center justify-between mb-4">
-                      <div>
+          {/* Student Detail Modal */}
+          <Modal
+            title={
+              selectedStudent ? (
+                <div className="flex items-center gap-4">
+                  <div>
+                    <h2 className="text-xl font-bold text-primary">
+                      {selectedStudent["Họ và tên"]}
+                    </h2>
+                    <p className="text-primary text-sm">
+                      Hồ sơ học sinh & báo cáo học tập
+                    </p>
+                  </div>
+                </div>
+              ) : null
+            }
+            open={isModalOpen}
+            onCancel={() => setModalOpen(false)}
+            footer={null}
+            width={1000}
+            style={{ top: 20 }}
+          >
+            {selectedStudent && (
+              <div className="p-6">
+                {(() => {
+                  // Tính các thống kê từ attendance sessions
+                  const studentSessions = attendanceSessions.filter((session) =>
+                    session["Điểm danh"]?.some(
+                      (record: any) => record["Student ID"] === selectedStudent.id
+                    )
+                  );
+
+                  // Tính phần trăm BTVN trung bình
+                  let totalHomeworkPercent = 0;
+                  let homeworkCount = 0;
+                  studentSessions.forEach((session) => {
+                    const record = session["Điểm danh"]?.find(
+                      (r: any) => r["Student ID"] === selectedStudent.id
+                    );
+                    if (record && record["% Hoàn thành BTVN"] !== undefined && record["% Hoàn thành BTVN"] !== null) {
+                      totalHomeworkPercent += Number(record["% Hoàn thành BTVN"]) || 0;
+                      homeworkCount++;
+                    }
+                  });
+                  const avgHomeworkPercent = homeworkCount > 0
+                    ? (totalHomeworkPercent / homeworkCount).toFixed(1)
+                    : "0";
+
+                  // Tính tổng điểm thưởng
+                  let totalBonusPoints = 0;
+                  studentSessions.forEach((session) => {
+                    const record = session["Điểm danh"]?.find(
+                      (r: any) => r["Student ID"] === selectedStudent.id
+                    );
+                    if (record && record["Điểm thưởng"]) {
+                      totalBonusPoints += Number(record["Điểm thưởng"]) || 0;
+                    }
+                  });
+
+                  // Tính trung bình điểm kiểm tra
+                  let totalTestScores = 0;
+                  let testCount = 0;
+                  studentSessions.forEach((session) => {
+                    const record = session["Điểm danh"]?.find(
+                      (r: any) => r["Student ID"] === selectedStudent.id
+                    );
+                    if (record) {
+                      const testScore = record["Điểm kiểm tra"] ?? record["Điểm"];
+                      if (testScore !== undefined && testScore !== null) {
+                        totalTestScores += Number(testScore) || 0;
+                        testCount++;
+                      }
+                    }
+                  });
+                  const avgTestScore = testCount > 0
+                    ? (totalTestScores / testCount).toFixed(1)
+                    : "0";
+
+                  return (
+                    <div>
+                      {/* Quick Stats */}
+                      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+                        <Card className="border-l-4 border-[#36797f]">
+                          <Statistic
+                            title={
+                              <span className="text-[#36797f] text-xs font-semibold uppercase tracking-wide">
+                                Trung bình điểm kiểm tra
+                              </span>
+                            }
+                            value={avgTestScore}
+                            valueStyle={{
+                              color: "#36797f",
+                              fontSize: "24px",
+                              fontWeight: "bold",
+                            }}
+                          />
+                        </Card>
+                        <Card className="border-l-4 border-[#36797f]">
+                          <Statistic
+                            title={
+                              <span className="text-[#36797f] text-xs font-semibold uppercase tracking-wide">
+                                Tổng buổi học
+                              </span>
+                            }
+                            value={selectedStudent.totalSessions}
+                            valueStyle={{
+                              color: "#36797f",
+                              fontSize: "24px",
+                              fontWeight: "bold",
+                            }}
+                          />
+                        </Card>
+                        <Card className="border-l-4 border-green-600">
+                          <Statistic
+                            title={
+                              <span className="text-green-600 text-xs font-semibold uppercase tracking-wide">
+                                Phần trăm BTVN trung bình
+                              </span>
+                            }
+                            value={`${avgHomeworkPercent}% `}
+                            valueStyle={{
+                              color: "#16a34a",
+                              fontSize: "24px",
+                              fontWeight: "bold",
+                            }}
+                          />
+                        </Card>
+                        <Card className="border-l-4 border-[#36797f]">
+                          <Statistic
+                            title={
+                              <span className="text-[#36797f] text-xs font-semibold uppercase tracking-wide">
+                                Tổng điểm thưởng
+                              </span>
+                            }
+                            value={totalBonusPoints.toFixed(1)}
+                            valueStyle={{
+                              color: "#36797f",
+                              fontSize: "24px",
+                              fontWeight: "bold",
+                            }}
+                          />
+                        </Card>
+                      </div>
+
+                      {/* Student Info */}
+                      <Card
+                        className="mb-6"
+                        style={{ borderColor: "#36797f", borderWidth: "2px" }}
+                      >
                         <Typography.Title
                           level={4}
-                          style={{ color: "#36797f", margin: "0 0 4px 0" }}
+                          style={{
+                            color: "#36797f",
+                            marginBottom: "16px",
+                            borderBottom: "2px solid #36797f",
+                            paddingBottom: "8px",
+                          }}
                         >
-                          Bảng điểm chi tiết
+                          Thông tin cá nhân
                         </Typography.Title>
-                        <Typography.Text
-                          type="secondary"
-                          style={{ fontSize: "12px", fontWeight: "500" }}
+                        <Row gutter={[24, 8]}>
+                          {selectedStudent["Mã học sinh"] && (
+                            <Col span={12}>
+                              <div className="flex items-baseline gap-2">
+                                <Typography.Text
+                                  strong
+                                  style={{ minWidth: "110px" }}
+                                >
+                                  Mã học sinh:
+                                </Typography.Text>
+                                <Typography.Text
+                                  style={{ color: "#36797f", fontWeight: "bold" }}
+                                >
+                                  {selectedStudent["Mã học sinh"]}
+                                </Typography.Text>
+                              </div>
+                            </Col>
+                          )}
+                          {selectedStudent["Ngày sinh"] && (
+                            <Col span={12}>
+                              <div className="flex items-baseline gap-2">
+                                <Typography.Text
+                                  strong
+                                  style={{ minWidth: "110px" }}
+                                >
+                                  Ngày sinh:
+                                </Typography.Text>
+                                <Typography.Text
+                                  style={{ color: "#36797f", fontWeight: "bold" }}
+                                >
+                                  {selectedStudent["Ngày sinh"]}
+                                </Typography.Text>
+                              </div>
+                            </Col>
+                          )}
+                          {selectedStudent["Số điện thoại"] && (
+                            <Col span={12}>
+                              <div className="flex items-baseline gap-2">
+                                <Typography.Text
+                                  strong
+                                  style={{ minWidth: "110px" }}
+                                >
+                                  Số điện thoại:
+                                </Typography.Text>
+                                <Typography.Text
+                                  style={{ color: "#36797f", fontWeight: "bold" }}
+                                >
+                                  {selectedStudent["Số điện thoại"]}
+                                </Typography.Text>
+                              </div>
+                            </Col>
+                          )}
+                          {selectedStudent["Email"] && (
+                            <Col span={12}>
+                              <div className="flex items-baseline gap-2">
+                                <Typography.Text
+                                  strong
+                                  style={{ minWidth: "110px" }}
+                                >
+                                  Email:
+                                </Typography.Text>
+                                <Typography.Text
+                                  style={{ color: "#36797f", fontWeight: "bold" }}
+                                >
+                                  {selectedStudent["Email"]}
+                                </Typography.Text>
+                              </div>
+                            </Col>
+                          )}
+                        </Row>
+                      </Card>
+
+                      {/* Filter and Chart Section */}
+                      <Card
+                        className="mb-4"
+                        style={{ borderColor: "#36797f", borderWidth: "2px" }}
+                      >
+                        <Typography.Title
+                          level={4}
+                          style={{ color: "#36797f", marginBottom: "16px" }}
                         >
-                          {dateRangeFilter && dateRangeFilter[0] && dateRangeFilter[1]
-                            ? `${dateRangeFilter[0].format('DD/MM/YYYY')} - ${dateRangeFilter[1].format('DD/MM/YYYY')}`
-                            : selectedMonth
-                            ? selectedMonth.format('MM/YYYY')
-                            : `${months[new Date().getMonth()]} ${new Date().getFullYear()}`}
-                        </Typography.Text>
-                      </div>
-                      <Button
-                        type="primary"
-                        icon={<FileTextOutlined />}
-                        onClick={() => {
+                          Bộ lọc và Biểu đồ
+                        </Typography.Title>
+
+                        {/* Quick Filter */}
+                        <div className="mb-4">
+                          <Typography.Text strong style={{ marginRight: "16px" }}>
+                            Bộ lọc nhanh:
+                          </Typography.Text>
+                          <Radio.Group
+                            value={quickFilter}
+                            onChange={(e) => {
+                              setQuickFilter(e.target.value);
+                              const now = dayjs();
+                              if (e.target.value === 'month') {
+                                setDateRangeFilter([now.startOf('month'), now.endOf('month')]);
+                              } else if (e.target.value === 'week') {
+                                setDateRangeFilter([now.startOf('isoWeek'), now.endOf('isoWeek')]);
+                              } else if (e.target.value === 'year') {
+                                setDateRangeFilter([now.startOf('year'), now.endOf('year')]);
+                              } else {
+                                setDateRangeFilter(null);
+                              }
+                            }}
+                          >
+                            <Radio.Button value="month">Theo tháng</Radio.Button>
+                            <Radio.Button value="week">Theo tuần</Radio.Button>
+                            <Radio.Button value="year">Theo năm</Radio.Button>
+                            <Radio.Button value="custom">Tùy chỉnh</Radio.Button>
+                          </Radio.Group>
+                        </div>
+
+                        {/* Date Range Picker */}
+                        <div className="mb-4">
+                          <Typography.Text strong style={{ marginRight: "16px" }}>
+                            Lọc theo ngày:
+                          </Typography.Text>
+                          <DatePicker.RangePicker
+                            value={dateRangeFilter}
+                            onChange={(dates) => {
+                              setDateRangeFilter(dates);
+                              if (dates) {
+                                setQuickFilter('custom');
+                              }
+                            }}
+                            format="DD/MM/YYYY"
+                            style={{ width: "300px" }}
+                          />
+                          {dateRangeFilter && (
+                            <Button
+                              type="link"
+                              icon={<ClearOutlined />}
+                              onClick={() => {
+                                setDateRangeFilter(null);
+                                setQuickFilter('month');
+                              }}
+                              style={{ marginLeft: "8px" }}
+                            >
+                              Xóa bộ lọc
+                            </Button>
+                          )}
+                        </div>
+
+                        {/* Subject Filter */}
+                        <div className="mb-4">
+                          <Typography.Text strong style={{ marginRight: "16px" }}>
+                            Lọc theo môn học:
+                          </Typography.Text>
+                          {(() => {
+                            // Get unique subjects from student's sessions
+                            const studentSessions = attendanceSessions.filter((session) =>
+                              session["Điểm danh"]?.some(
+                                (record: any) => record["Student ID"] === selectedStudent.id
+                              )
+                            );
+                            const uniqueSubjects = Array.from(
+                              new Set(
+                                studentSessions
+                                  .map((s) => s["Tên lớp"]?.split(" - ")[0] || s["Môn học"] || "Chưa phân loại")
+                                  .filter(Boolean)
+                              )
+                            ).sort();
+
+                            return (
+                              <Select
+                                value={subjectFilter}
+                                onChange={(value) => setSubjectFilter(value)}
+                                placeholder="Chọn môn học"
+                                allowClear
+                                style={{ width: "300px" }}
+                                options={[
+                                  { label: "Tất cả môn học", value: null },
+                                  ...uniqueSubjects.map((subject) => ({
+                                    label: subject,
+                                    value: subject,
+                                  })),
+                                ]}
+                              />
+                            );
+                          })()}
+                          {subjectFilter && (
+                            <Button
+                              type="link"
+                              icon={<ClearOutlined />}
+                              onClick={() => setSubjectFilter(null)}
+                              style={{ marginLeft: "8px" }}
+                            >
+                              Xóa bộ lọc môn
+                            </Button>
+                          )}
+                        </div>
+
+                        {/* Charts */}
+                        {(() => {
+                          // Get filtered sessions
+                          let filteredSessions = attendanceSessions.filter((session) => {
+                            const hasAttendance = session["Điểm danh"]?.some(
+                              (record: any) => record["Student ID"] === selectedStudent.id
+                            );
+                            if (!hasAttendance) return false;
+                            if (!session["Ngày"]) return false;
+
+                            // Apply subject filter
+                            if (subjectFilter) {
+                              const sessionSubject = session["Tên lớp"]?.split(" - ")[0] || session["Môn học"] || "Chưa phân loại";
+                              if (sessionSubject !== subjectFilter) return false;
+                            }
+
+                            // Apply date filter
+                            if (dateRangeFilter && dateRangeFilter[0] && dateRangeFilter[1]) {
+                              const sessionDate = dayjs(session["Ngày"]);
+                              const startDate = dateRangeFilter[0].startOf('day');
+                              const endDate = dateRangeFilter[1].endOf('day');
+                              return (sessionDate.isAfter(startDate) || sessionDate.isSame(startDate)) &&
+                                (sessionDate.isBefore(endDate) || sessionDate.isSame(endDate));
+                            }
+
+                            // Default to current month if no filter
+                            const now = dayjs();
+                            const sessionDate = dayjs(session["Ngày"]);
+                            const monthStart = now.startOf('month');
+                            const monthEnd = now.endOf('month');
+                            return (sessionDate.isAfter(monthStart) || sessionDate.isSame(monthStart)) &&
+                              (sessionDate.isBefore(monthEnd) || sessionDate.isSame(monthEnd));
+                          }).sort((a, b) => {
+                            const dateA = new Date(a["Ngày"]);
+                            const dateB = new Date(b["Ngày"]);
+                            return dateA.getTime() - dateB.getTime();
+                          });
+
+                          // Prepare chart data
+                          const chartData = {
+                            dates: filteredSessions.map(s => dayjs(s["Ngày"]).format("DD/MM")),
+                            homework: filteredSessions.map(s => {
+                              const record = s["Điểm danh"]?.find(
+                                (r: any) => r["Student ID"] === selectedStudent.id
+                              );
+                              const value = record?.["% Hoàn thành BTVN"];
+                              return value !== null && value !== undefined ? Number(value) : null;
+                            }),
+                            testScores: filteredSessions.map(s => {
+                              const record = s["Điểm danh"]?.find(
+                                (r: any) => r["Student ID"] === selectedStudent.id
+                              );
+                              const value = record?.["Điểm kiểm tra"] ?? record?.["Điểm"];
+                              return value !== null && value !== undefined ? Number(value) : null;
+                            }),
+                            bonusPoints: filteredSessions.map(s => {
+                              const record = s["Điểm danh"]?.find(
+                                (r: any) => r["Student ID"] === selectedStudent.id
+                              );
+                              const value = record?.["Điểm thưởng"];
+                              return value !== null && value !== undefined ? Number(value) : null;
+                            }),
+                          };
+
+                          // Debug log
+                          console.log("📊 Chart Data:", {
+                            filteredSessionsCount: filteredSessions.length,
+                            dates: chartData.dates,
+                            homework: chartData.homework,
+                            testScores: chartData.testScores,
+                            bonusPoints: chartData.bonusPoints,
+                          });
+
+                          const chartOptions: ApexOptions = {
+                            chart: {
+                              type: 'line',
+                              height: 350,
+                              toolbar: {
+                                show: true,
+                                tools: {
+                                  download: true,
+                                  selection: true,
+                                  zoom: true,
+                                  zoomin: true,
+                                  zoomout: true,
+                                  pan: true,
+                                  reset: true,
+                                },
+                              },
+                            },
+                            stroke: {
+                              curve: 'smooth',
+                              width: 3,
+                            },
+                            xaxis: {
+                              categories: chartData.dates,
+                              title: { text: 'Ngày' },
+                            },
+                            yaxis: [
+                              {
+                                title: { text: '% BTVN / Điểm' },
+                                labels: {
+                                  formatter: (value: number) => {
+                                    return value !== null ? value.toFixed(1) : '';
+                                  },
+                                },
+                              },
+                            ],
+                            legend: {
+                              position: 'top',
+                            },
+                            tooltip: {
+                              shared: true,
+                              intersect: false,
+                              y: {
+                                formatter: (value: number) => {
+                                  return value !== null ? value.toFixed(1) : '-';
+                                },
+                              },
+                            },
+                            dataLabels: {
+                              enabled: false,
+                            },
+                            markers: {
+                              size: 4,
+                              hover: {
+                                size: 6,
+                              },
+                            },
+                          };
+
+                          // Check if there's any data to display
+                          const hasData = chartData.homework.some(v => v !== null) ||
+                            chartData.testScores.some(v => v !== null) ||
+                            chartData.bonusPoints.some(v => v !== null);
+
+                          if (!hasData || filteredSessions.length === 0) {
+                            return (
+                              <Empty
+                                description={
+                                  filteredSessions.length === 0
+                                    ? "Không có dữ liệu trong khoảng thời gian đã chọn"
+                                    : "Không có dữ liệu điểm để hiển thị"
+                                }
+                              />
+                            );
+                          }
+
+                          return (
+                            <div>
+                              <ReactApexChart
+                                options={{
+                                  ...chartOptions,
+                                  title: {
+                                    text: 'Biến thiên BTVN, Điểm kiểm tra và Điểm thưởng',
+                                    style: {
+                                      fontSize: '16px',
+                                      fontWeight: 'bold',
+                                    },
+                                  },
+                                }}
+                                series={[
+                                  {
+                                    name: '% BTVN',
+                                    data: chartData.homework,
+                                    color: '#16a34a',
+                                  },
+                                  {
+                                    name: 'Điểm kiểm tra',
+                                    data: chartData.testScores,
+                                    color: '#36797f',
+                                  },
+                                  {
+                                    name: 'Điểm thưởng',
+                                    data: chartData.bonusPoints,
+                                    color: '#fa8c16',
+                                  },
+                                ]}
+                                type="line"
+                                height={350}
+                              />
+                            </div>
+                          );
+                        })()}
+                      </Card>
+
+                      {/* Score Table */}
+                      <Card
+                        className="mb-4"
+                        style={{ borderColor: "#36797f", borderWidth: "2px" }}
+                      >
+                        <div className="flex items-center justify-between mb-4">
+                          <div>
+                            <Typography.Title
+                              level={4}
+                              style={{ color: "#36797f", margin: "0 0 4px 0" }}
+                            >
+                              Bảng điểm chi tiết
+                            </Typography.Title>
+                            <Typography.Text
+                              type="secondary"
+                              style={{ fontSize: "12px", fontWeight: "500" }}
+                            >
+                              {dateRangeFilter && dateRangeFilter[0] && dateRangeFilter[1]
+                                ? `${dateRangeFilter[0].format('DD/MM/YYYY')} - ${dateRangeFilter[1].format('DD/MM/YYYY')} `
+                                : selectedMonth
+                                  ? selectedMonth.format('MM/YYYY')
+                                  : `${months[new Date().getMonth()]} ${new Date().getFullYear()} `}
+                            </Typography.Text>
+                          </div>
+                          <Button
+                            type="primary"
+                            icon={<FileTextOutlined />}
+                            onClick={() => {
+                              let fromDate: Date;
+                              let toDate: Date;
+                              if (dateRangeFilter && dateRangeFilter[0] && dateRangeFilter[1]) {
+                                fromDate = dateRangeFilter[0].toDate();
+                                toDate = dateRangeFilter[1].toDate();
+                              } else if (selectedMonth) {
+                                fromDate = selectedMonth.startOf('month').toDate();
+                                toDate = selectedMonth.endOf('month').toDate();
+                              } else {
+                                const now = new Date();
+                                fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
+                                toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
+                              }
+                              const events = getStudentEventsByDateRange(
+                                selectedStudent.id,
+                                fromDate,
+                                toDate
+                              );
+                              handlePrintScoreTable(selectedStudent, events);
+                            }}
+                          >
+                            In bảng điểm
+                          </Button>
+                        </div>
+                        {(() => {
                           let fromDate: Date;
                           let toDate: Date;
                           if (dateRangeFilter && dateRangeFilter[0] && dateRangeFilter[1]) {
@@ -2685,754 +3080,728 @@ const StudentListView: React.FC = () => {
                             fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
                             toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
                           }
-                          const events = getStudentEventsByDateRange(
-                            selectedStudent.id,
-                            fromDate,
-                            toDate
-                          );
-                          handlePrintScoreTable(selectedStudent, events);
-                        }}
-                      >
-                        In bảng điểm
-                      </Button>
-                    </div>
-                    {(() => {
-                      let fromDate: Date;
-                      let toDate: Date;
-                      if (dateRangeFilter && dateRangeFilter[0] && dateRangeFilter[1]) {
-                        fromDate = dateRangeFilter[0].toDate();
-                        toDate = dateRangeFilter[1].toDate();
-                      } else if (selectedMonth) {
-                        fromDate = selectedMonth.startOf('month').toDate();
-                        toDate = selectedMonth.endOf('month').toDate();
-                      } else {
-                        const now = new Date();
-                        fromDate = new Date(now.getFullYear(), now.getMonth(), 1);
-                        toDate = new Date(now.getFullYear(), now.getMonth() + 1, 0);
-                      }
-                      const sessions = attendanceSessions
-                        .filter((session) => {
-                          const hasAttendance = session["Điểm danh"]?.some(
-                            (record: any) => record["Student ID"] === selectedStudent.id
-                          );
-                          if (!hasAttendance) return false;
-                          if (!session["Ngày"]) return false;
-                          const sessionDate = new Date(session["Ngày"]);
-                          if (sessionDate < fromDate || sessionDate > toDate) return false;
-                          
-                          // Check enrollment date - chỉ hiển thị sessions sau ngày đăng ký
-                          const classId = session["Class ID"];
-                          const classData = classes.find(c => c.id === classId);
-                          if (classData) {
-                            const enrollments = classData["Student Enrollments"] || {};
-                            if (enrollments[selectedStudent.id]) {
-                              const enrollmentDate = enrollments[selectedStudent.id].enrollmentDate;
-                              const sessionDateStr = session["Ngày"];
-                              // Chỉ hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session
-                              if (enrollmentDate > sessionDateStr) return false;
-                            }
-                          }
-                          
-                          return true;
-                        })
-                        .sort((a, b) => {
-                          const dateA = new Date(a["Ngày"]);
-                          const dateB = new Date(b["Ngày"]);
-                          return dateA.getTime() - dateB.getTime();
-                        });
+                          const sessions = attendanceSessions
+                            .filter((session) => {
+                              const hasAttendance = session["Điểm danh"]?.some(
+                                (record: any) => record["Student ID"] === selectedStudent.id
+                              );
+                              if (!hasAttendance) return false;
+                              if (!session["Ngày"]) return false;
+                              const sessionDate = new Date(session["Ngày"]);
+                              if (sessionDate < fromDate || sessionDate > toDate) return false;
 
-                      if (sessions.length === 0) {
-                        return (
-                          <div className="bg-white rounded-xl p-10 text-center shadow-md border-2 border-gray-200">
-                            <div className="text-lg font-semibold text-[#36797f]">
-                              Không có buổi học trong tháng này
-                            </div>
-                          </div>
-                        );
-                      }
+                              // Check enrollment date - chỉ hiển thị sessions sau ngày đăng ký
+                              const classId = session["Class ID"];
+                              const classData = classes.find(c => c.id === classId);
+                              if (classData) {
+                                const enrollments = classData["Student Enrollments"] || {};
+                                if (enrollments[selectedStudent.id]) {
+                                  const enrollmentDate = enrollments[selectedStudent.id].enrollmentDate;
+                                  const sessionDateStr = session["Ngày"];
+                                  // Chỉ hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session
+                                  if (enrollmentDate > sessionDateStr) return false;
+                                }
+                              }
 
-                      // Group by subject
-                      const sessionsBySubject: { [subject: string]: any[] } = {};
-                      sessions.forEach((session) => {
-                        const subject = session["Tên lớp"]?.split(" - ")[0] || "Chưa phân loại";
-                        if (!sessionsBySubject[subject]) {
-                          sessionsBySubject[subject] = [];
-                        }
-                        sessionsBySubject[subject].push(session);
-                      });
+                              return true;
+                            })
+                            .sort((a, b) => {
+                              const dateA = new Date(a["Ngày"]);
+                              const dateB = new Date(b["Ngày"]);
+                              return dateA.getTime() - dateB.getTime();
+                            });
 
-                      return (
-                        <div className="space-y-4">
-                          {Object.entries(sessionsBySubject).map(([subject, subjectSessions]) => (
-                            <div key={subject}>
-                              <h4 style={{ 
-                                background: "#e6f7ff", 
-                                padding: "8px 12px", 
-                                fontWeight: "bold",
-                                marginBottom: "8px",
-                                borderLeft: "4px solid #1890ff"
-                              }}>
-                                Môn {subject}
-                              </h4>
-                              <div style={{ overflowX: "auto" }}>
-                                <table style={{ 
-                                  width: "100%", 
-                                  borderCollapse: "collapse",
-                                  fontSize: "12px"
-                                }}>
-                                  <thead>
-                                    <tr style={{ background: "#f0f0f0" }}>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Ngày</th>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Tên HS</th>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Chuyên cần</th>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>% BTVN</th>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Tên bài kiểm tra</th>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Điểm</th>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Điểm thưởng</th>
-                                      <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Nhận xét</th>
-                                    </tr>
-                                  </thead>
-                                  <tbody>
-                                    {subjectSessions.map((session) => {
-                                      const studentRecord = session["Điểm danh"]?.find(
-                                        (r: any) => r["Student ID"] === selectedStudent.id
-                                      );
-                                      if (!studentRecord) return null;
-
-                                      const attendance = studentRecord["Có mặt"]
-                                        ? studentRecord["Đi muộn"]
-                                          ? "Đi muộn"
-                                          : "Có mặt"
-                                        : studentRecord["Vắng có phép"]
-                                        ? "Vắng có phép"
-                                        : "Vắng";
-
-                                      return (
-                                        <tr key={session.id}>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                            {new Date(session["Ngày"]).toLocaleDateString("vi-VN")}
-                                          </td>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                            {selectedStudent["Họ và tên"]}
-                                          </td>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                            {attendance}
-                                          </td>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                            {studentRecord["% Hoàn thành BTVN"] ?? "-"}
-                                          </td>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                            {studentRecord["Bài kiểm tra"] || "-"}
-                                          </td>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center", fontWeight: "bold" }}>
-                                            {studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-"}
-                                          </td>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                            {studentRecord["Điểm thưởng"] ?? "-"}
-                                          </td>
-                                          <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "left", paddingLeft: "12px" }}>
-                                            {studentRecord["Ghi chú"] || "-"}
-                                          </td>
-                                        </tr>
-                                      );
-                                    })}
-                                  </tbody>
-                                </table>
+                          if (sessions.length === 0) {
+                            return (
+                              <div className="bg-white rounded-xl p-10 text-center shadow-md border-2 border-gray-200">
+                                <div className="text-lg font-semibold text-[#36797f]">
+                                  Không có buổi học trong tháng này
+                                </div>
                               </div>
+                            );
+                          }
+
+                          // Group by subject
+                          const sessionsBySubject: { [subject: string]: any[] } = {};
+                          sessions.forEach((session) => {
+                            const subject = session["Tên lớp"]?.split(" - ")[0] || "Chưa phân loại";
+                            if (!sessionsBySubject[subject]) {
+                              sessionsBySubject[subject] = [];
+                            }
+                            sessionsBySubject[subject].push(session);
+                          });
+
+                          return (
+                            <div className="space-y-4">
+                              {Object.entries(sessionsBySubject).map(([subject, subjectSessions]) => (
+                                <div key={subject}>
+                                  <h4 style={{
+                                    background: "#e6f7ff",
+                                    padding: "8px 12px",
+                                    fontWeight: "bold",
+                                    marginBottom: "8px",
+                                    borderLeft: "4px solid #1890ff"
+                                  }}>
+                                    Môn {subject}
+                                  </h4>
+                                  <div style={{ overflowX: "auto" }}>
+                                    <table style={{
+                                      width: "100%",
+                                      borderCollapse: "collapse",
+                                      fontSize: "12px"
+                                    }}>
+                                      <thead>
+                                        <tr style={{ background: "#f0f0f0" }}>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Ngày</th>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Tên HS</th>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Chuyên cần</th>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>% BTVN</th>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Tên bài kiểm tra</th>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Điểm</th>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Điểm thưởng</th>
+                                          <th style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>Nhận xét</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {subjectSessions.map((session) => {
+                                          const studentRecord = session["Điểm danh"]?.find(
+                                            (r: any) => r["Student ID"] === selectedStudent.id
+                                          );
+                                          if (!studentRecord) return null;
+
+                                          const attendance = studentRecord["Có mặt"]
+                                            ? studentRecord["Đi muộn"]
+                                              ? "Đi muộn"
+                                              : "Có mặt"
+                                            : studentRecord["Vắng có phép"]
+                                              ? "Vắng có phép"
+                                              : "Vắng";
+
+                                          return (
+                                            <tr key={session.id}>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
+                                                {new Date(session["Ngày"]).toLocaleDateString("vi-VN")}
+                                              </td>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
+                                                {selectedStudent["Họ và tên"]}
+                                              </td>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
+                                                {attendance}
+                                              </td>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
+                                                {studentRecord["% Hoàn thành BTVN"] ?? "-"}
+                                              </td>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
+                                                {studentRecord["Bài kiểm tra"] || "-"}
+                                              </td>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center", fontWeight: "bold" }}>
+                                                {studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-"}
+                                              </td>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
+                                                {studentRecord["Điểm thưởng"] ?? "-"}
+                                              </td>
+                                              <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "left", paddingLeft: "12px" }}>
+                                                {studentRecord["Ghi chú"] || "-"}
+                                              </td>
+                                            </tr>
+                                          );
+                                        })}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </div>
+                              ))}
                             </div>
-                          ))}
-                        </div>
-                      );
-                    })()}
-                  </Card>
+                          );
+                        })()}
+                      </Card>
 
-                </div>
-              );
-            })()}
-          </div>
-        )}
-      </Modal>
+                    </div>
+                  );
+                })()}
+              </div>
+            )}
+          </Modal>
 
-      {/* Edit Student Modal */}
-      <Modal
-        title={
-          <div
-            style={{
-              backgroundColor: "#36797f",
-              padding: "24px",
-              borderRadius: "12px 12px 0 0",
-            }}
-          >
-            <Typography.Title level={3} style={{ color: "white", margin: 0 }}>
-              {editingStudent && editingStudent.id
-                ? "Chỉnh sửa thông tin học sinh"
-                : "Thêm học sinh mới"}
-            </Typography.Title>
-          </div>
-        }
-        open={isEditModalOpen}
-        onCancel={() => {
-          setEditModalOpen(false);
-          setEditingStudent(null);
-          editStudentForm.resetFields();
-        }}
-        footer={null}
-        width={600}
-        style={{ top: 20 }}
-      >
-        <Form
-          form={editStudentForm}
-          onFinish={async (values) => {
-            // Auto-generate Student Code if adding new student (only if not provided)
-            let studentCode = values.studentCode || editingStudent?.["Mã học sinh"] || "";
-            if (!editingStudent?.id && !studentCode) {
-              // Generate new code: HS001, HS002, etc.
-              const existingCodes = students
-                .map((s) => s["Mã học sinh"])
-                .filter((code) => code && code.startsWith("HS"))
-                .map((code) => parseInt(code.replace("HS", "")) || 0);
-              const maxNumber =
-                existingCodes.length > 0 ? Math.max(...existingCodes) : 0;
-              studentCode = `HS${String(maxNumber + 1).padStart(3, "0")}`;
-            }
-
-            const studentData: Partial<Student> = {
-              "Họ và tên": values.name,
-              "Mã học sinh": studentCode,
-              "Ngày sinh": values.dob,
-              "Số điện thoại": values.phone,
-              "SĐT phụ huynh": values.parentPhone,
-              "Trạng thái": values.status,
-              "Địa chỉ": values.address,
-              "Mật khẩu": values.password || "",
-              "Số giờ đã gia hạn": editingStudent?.["Số giờ đã gia hạn"] || 0,
-              "Khối": values.grade || "",
-              "Môn học đăng ký": values.registeredSubjects || [],
-            };
-            // Preserve the ID if editing an existing student
-            if (editingStudent?.id) {
-              studentData.id = editingStudent.id;
-            }
-            await handleSaveStudent(studentData, values.registeredSubjects || []);
-          }}
-          layout="vertical"
-          style={{ padding: "24px" }}
-        >
-          <Row gutter={16}>
-            <Col span={16}>
-              <Form.Item
-                label="Họ và tên"
-                name="name"
-                rules={[{ required: true, message: "Vui lòng nhập họ và tên" }]}
-              >
-                <Input placeholder="Nhập họ và tên" />
-              </Form.Item>
-            </Col>
-            <Col span={8}>
-              <Form.Item 
-                label="Mã học sinh" 
-                name="studentCode"
-                extra={!editingStudent?.id ? "Để trống sẽ tự tạo" : undefined}
-              >
-                <Input placeholder="VD: HS001" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Ngày sinh" name="dob">
-                <Input type="date" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Khối" name="grade">
-                <Select
-                  placeholder="Chọn khối"
-                  options={studentGradeOptions}
-                  allowClear
-                />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="SĐT học sinh" name="phone">
-                <Input placeholder="Nhập số điện thoại học sinh" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="SĐT phụ huynh" name="parentPhone">
-                <Input placeholder="Nhập số điện thoại phụ huynh" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item label="Trạng thái" name="status">
-                <Input placeholder="Nhập trạng thái" />
-              </Form.Item>
-            </Col>
-            <Col span={12}>
-              <Form.Item 
-                label="Mật khẩu (Phụ huynh)" 
-                name="password"
-                extra="Mật khẩu để phụ huynh đăng nhập xem thông tin học sinh"
-              >
-                <Input.Password placeholder="Nhập mật khẩu" />
-              </Form.Item>
-            </Col>
-            <Col span={24}>
-              <Form.Item 
-                label="Lớp đăng ký" 
-                name="registeredSubjects"
-                extra="Chọn các lớp từ danh sách lớp học; chọn thêm sẽ thêm học sinh vào lớp"
-              >
-                <Select
-                  mode="multiple"
-                  placeholder="Chọn lớp"
-                  options={classes.map((c) => ({
-                    label: `${c["Tên lớp"]} — ${subjectMap[c["Môn học"]] || c["Môn học"]}`,
-                    value: c.id,
-                  }))}
-                  style={{ width: "100%" }}
-                  optionFilterProp="label"
-                  allowClear
-                />
-              </Form.Item>
-            </Col>
-            <Col span={24}>
-              <Form.Item label="Địa chỉ" name="address">
-                <Input.TextArea rows={2} placeholder="Nhập địa chỉ" />
-              </Form.Item>
-            </Col>
-          </Row>
-
-          <Form.Item style={{ marginBottom: 0, marginTop: "24px" }}>
-            <Space style={{ width: "100%", justifyContent: "flex-end" }}>
-              <Button
-                onClick={() => {
-                  setEditModalOpen(false);
-                  setEditingStudent(null);
-                  editStudentForm.resetFields();
-                }}
-              >
-                Huỷ
-              </Button>
-              <Button
-                type="primary"
-                htmlType="submit"
-                style={{ backgroundColor: "#36797f", borderColor: "#36797f" }}
-              >
-                Lưu
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Extend Hours Modal */}
-      <Modal
-        title={
-          <div
-            style={{
-              backgroundColor: "#36797f",
-              padding: "20px",
-              borderRadius: "12px 12px 0 0",
-            }}
-          >
-            <Typography.Title level={3} style={{ color: "white", margin: 0 }}>
-              💰 Điều chỉnh số dư giờ
-            </Typography.Title>
-            <Typography.Text
-              style={{
-                color: "rgba(255,255,255,0.8)",
-                fontSize: "14px",
-                marginTop: "4px",
-                display: "block",
-              }}
-            >
-              Thêm hoặc bớt giờ từ tài khoản học sinh
-            </Typography.Text>
-          </div>
-        }
-        open={isExtendModalOpen}
-        onCancel={() => {
-          setExtendModalOpen(false);
-          setExtendingStudent(null);
-          extendHoursForm.resetFields();
-        }}
-        footer={null}
-        width={500}
-        style={{ top: 20 }}
-        bodyStyle={{ padding: 0 }}
-      >
-        <Form
-          form={extendHoursForm}
-          onFinish={(values) => {
-            const additionalHours = Number(values.additionalHours) || 0;
-            handleSaveExtension(additionalHours);
-          }}
-          layout="vertical"
-          style={{ padding: "24px" }}
-        >
-          <Space direction="vertical" style={{ width: "100%" }}>
-            {/* Họ và tên (auto) */}
-            <Form.Item label="Họ và tên" name="studentName">
-              <Input disabled />
-            </Form.Item>
-
-            {/* Giờ nhập thêm - CHO PHÉP SỐ ÂM */}
-            <Form.Item
-              label="Thêm hoặc bớt giờ"
-              name="additionalHours"
-              rules={[{ required: true, message: "Vui lòng nhập số giờ" }]}
-              extra="+ để thêm, - để bớt (ví dụ: +50 hoặc -10)"
-            >
-              <InputNumber
-                step={0.5}
-                placeholder="+ để thêm, - để bớt"
-                style={{
-                  width: "100%",
-                  padding: "12px",
-                  fontSize: "18px",
-                  textAlign: "center",
-                  fontWeight: "bold",
-                }}
-              />
-            </Form.Item>
-
-            {/* Người nhập (auto) */}
-            <Form.Item label="Người nhập">
-              <Input value={currentUsername} disabled />
-            </Form.Item>
-
-            {/* Ngày nhập (auto) */}
-            <Form.Item label="Ngày nhập">
-              <Input value={new Date().toLocaleDateString("vi-VN")} disabled />
-            </Form.Item>
-
-            {/* Giờ nhập (auto) */}
-            <Form.Item label="Giờ nhập">
-              <Input value={new Date().toLocaleTimeString("vi-VN")} disabled />
-            </Form.Item>
-          </Space>
-
-          <Form.Item style={{ marginBottom: 0, marginTop: "24px" }}>
-            <Space style={{ width: "100%", justifyContent: "space-between" }}>
-              <Button
-                onClick={() => {
-                  setExtendModalOpen(false);
-                  setExtendingStudent(null);
-                  extendHoursForm.resetFields();
-                }}
-                style={{ flex: 1 }}
-              >
-                Hủy
-              </Button>
-              <Button
-                type="primary"
-                htmlType="submit"
+          {/* Edit Student Modal */}
+          <Modal
+            title={
+              <div
                 style={{
                   backgroundColor: "#36797f",
-                  borderColor: "#36797f",
-                  flex: 1,
+                  padding: "24px",
+                  borderRadius: "12px 12px 0 0",
                 }}
               >
-                💾 Lưu thay đổi
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      </Modal>
+                <Typography.Title level={3} style={{ color: "white", margin: 0 }}>
+                  {editingStudent && editingStudent.id
+                    ? "Chỉnh sửa thông tin học sinh"
+                    : "Thêm học sinh mới"}
+                </Typography.Title>
+              </div>
+            }
+            open={isEditModalOpen}
+            onCancel={() => {
+              setEditModalOpen(false);
+              setEditingStudent(null);
+              editStudentForm.resetFields();
+            }}
+            footer={null}
+            width={600}
+            style={{ top: 20 }}
+          >
+            <Form
+              form={editStudentForm}
+              onFinish={async (values) => {
+                // Auto-generate Student Code if adding new student (only if not provided)
+                let studentCode = values.studentCode || editingStudent?.["Mã học sinh"] || "";
+                if (!editingStudent?.id && !studentCode) {
+                  // Generate new code: HS001, HS002, etc.
+                  const existingCodes = students
+                    .map((s) => s["Mã học sinh"])
+                    .filter((code) => code && code.startsWith("HS"))
+                    .map((code) => parseInt(code.replace("HS", "")) || 0);
+                  const maxNumber =
+                    existingCodes.length > 0 ? Math.max(...existingCodes) : 0;
+                  studentCode = `HS${String(maxNumber + 1).padStart(3, "0")} `;
+                }
 
-      {/* Edit Extension Modal */}
-      <Modal
-        title={
-          <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                const studentData: Partial<Student> = {
+                  "Họ và tên": values.name,
+                  "Mã học sinh": studentCode,
+                  "Ngày sinh": values.dob,
+                  "Số điện thoại": values.phone,
+                  "SĐT phụ huynh": values.parentPhone,
+                  "Trạng thái": values.status,
+                  "Địa chỉ": values.address,
+                  "Mật khẩu": values.password || "",
+                  "Số giờ đã gia hạn": editingStudent?.["Số giờ đã gia hạn"] || 0,
+                  "Khối": values.grade || "",
+                  "Môn học đăng ký": values.registeredSubjects || [],
+                };
+                // Preserve the ID if editing an existing student
+                if (editingStudent?.id) {
+                  studentData.id = editingStudent.id;
+                }
+                await handleSaveStudent(studentData, values.registeredSubjects || []);
+              }}
+              layout="vertical"
+              style={{ padding: "24px" }}
+            >
+              <Row gutter={16}>
+                <Col span={16}>
+                  <Form.Item
+                    label="Họ và tên"
+                    name="name"
+                    rules={[{ required: true, message: "Vui lòng nhập họ và tên" }]}
+                  >
+                    <Input placeholder="Nhập họ và tên" />
+                  </Form.Item>
+                </Col>
+                <Col span={8}>
+                  <Form.Item
+                    label="Mã học sinh"
+                    name="studentCode"
+                    extra={!editingStudent?.id ? "Để trống sẽ tự tạo" : undefined}
+                  >
+                    <Input placeholder="VD: HS001" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="Ngày sinh" name="dob">
+                    <Input type="date" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="Khối" name="grade">
+                    <Select
+                      placeholder="Chọn khối"
+                      options={studentGradeOptions}
+                      allowClear
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="SĐT học sinh" name="phone">
+                    <Input placeholder="Nhập số điện thoại học sinh" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="SĐT phụ huynh" name="parentPhone">
+                    <Input placeholder="Nhập số điện thoại phụ huynh" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item label="Trạng thái" name="status">
+                    <Input placeholder="Nhập trạng thái" />
+                  </Form.Item>
+                </Col>
+                <Col span={12}>
+                  <Form.Item
+                    label="Mật khẩu (Phụ huynh)"
+                    name="password"
+                    extra="Mật khẩu để phụ huynh đăng nhập xem thông tin học sinh"
+                  >
+                    <Input.Password placeholder="Nhập mật khẩu" />
+                  </Form.Item>
+                </Col>
+                <Col span={24}>
+                  <Form.Item
+                    label="Lớp đăng ký"
+                    name="registeredSubjects"
+                    extra="Chọn các lớp từ danh sách lớp học; chọn thêm sẽ thêm học sinh vào lớp"
+                  >
+                    <Select
+                      mode="multiple"
+                      placeholder="Chọn lớp"
+                      options={classes.map((c) => ({
+                        label: `${c["Tên lớp"]} — ${subjectMap[c["Môn học"]] || c["Môn học"]} `,
+                        value: c.id,
+                      }))}
+                      style={{ width: "100%" }}
+                      optionFilterProp="label"
+                      allowClear
+                    />
+                  </Form.Item>
+                </Col>
+                <Col span={24}>
+                  <Form.Item label="Địa chỉ" name="address">
+                    <Input.TextArea rows={2} placeholder="Nhập địa chỉ" />
+                  </Form.Item>
+                </Col>
+              </Row>
+
+              <Form.Item style={{ marginBottom: 0, marginTop: "24px" }}>
+                <Space style={{ width: "100%", justifyContent: "flex-end" }}>
+                  <Button
+                    onClick={() => {
+                      setEditModalOpen(false);
+                      setEditingStudent(null);
+                      editStudentForm.resetFields();
+                    }}
+                  >
+                    Huỷ
+                  </Button>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    style={{ backgroundColor: "#36797f", borderColor: "#36797f" }}
+                  >
+                    Lưu
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
+          </Modal>
+
+          {/* Extend Hours Modal */}
+          <Modal
+            title={
+              <div
+                style={{
+                  backgroundColor: "#36797f",
+                  padding: "20px",
+                  borderRadius: "12px 12px 0 0",
+                }}
+              >
+                <Typography.Title level={3} style={{ color: "white", margin: 0 }}>
+                  💰 Điều chỉnh số dư giờ
+                </Typography.Title>
+                <Typography.Text
+                  style={{
+                    color: "rgba(255,255,255,0.8)",
+                    fontSize: "14px",
+                    marginTop: "4px",
+                    display: "block",
+                  }}
+                >
+                  Thêm hoặc bớt giờ từ tài khoản học sinh
+                </Typography.Text>
+              </div>
+            }
+            open={isExtendModalOpen}
+            onCancel={() => {
+              setExtendModalOpen(false);
+              setExtendingStudent(null);
+              extendHoursForm.resetFields();
+            }}
+            footer={null}
+            width={500}
+            style={{ top: 20 }}
+            bodyStyle={{ padding: 0 }}
+          >
+            <Form
+              form={extendHoursForm}
+              onFinish={(values) => {
+                const additionalHours = Number(values.additionalHours) || 0;
+                handleSaveExtension(additionalHours);
+              }}
+              layout="vertical"
+              style={{ padding: "24px" }}
+            >
+              <Space direction="vertical" style={{ width: "100%" }}>
+                {/* Họ và tên (auto) */}
+                <Form.Item label="Họ và tên" name="studentName">
+                  <Input disabled />
+                </Form.Item>
+
+                {/* Giờ nhập thêm - CHO PHÉP SỐ ÂM */}
+                <Form.Item
+                  label="Thêm hoặc bớt giờ"
+                  name="additionalHours"
+                  rules={[{ required: true, message: "Vui lòng nhập số giờ" }]}
+                  extra="+ để thêm, - để bớt (ví dụ: +50 hoặc -10)"
+                >
+                  <InputNumber
+                    step={0.5}
+                    placeholder="+ để thêm, - để bớt"
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      fontSize: "18px",
+                      textAlign: "center",
+                      fontWeight: "bold",
+                    }}
+                  />
+                </Form.Item>
+
+                {/* Người nhập (auto) */}
+                <Form.Item label="Người nhập">
+                  <Input value={currentUsername} disabled />
+                </Form.Item>
+
+                {/* Ngày nhập (auto) */}
+                <Form.Item label="Ngày nhập">
+                  <Input value={new Date().toLocaleDateString("vi-VN")} disabled />
+                </Form.Item>
+
+                {/* Giờ nhập (auto) */}
+                <Form.Item label="Giờ nhập">
+                  <Input value={new Date().toLocaleTimeString("vi-VN")} disabled />
+                </Form.Item>
+              </Space>
+
+              <Form.Item style={{ marginBottom: 0, marginTop: "24px" }}>
+                <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                  <Button
+                    onClick={() => {
+                      setExtendModalOpen(false);
+                      setExtendingStudent(null);
+                      extendHoursForm.resetFields();
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    Hủy
+                  </Button>
+                  <Button
+                    type="primary"
+                    htmlType="submit"
+                    style={{
+                      backgroundColor: "#36797f",
+                      borderColor: "#36797f",
+                      flex: 1,
+                    }}
+                  >
+                    💾 Lưu thay đổi
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
+          </Modal>
+
+          {/* Edit Extension Modal */}
+          <Modal
+            title={
+              <div style={{ display: "flex", alignItems: "center", gap: "12px" }}>
+                <div
+                  style={{
+                    width: "48px",
+                    height: "48px",
+                    borderRadius: "50%",
+                    backgroundColor: "#1890ff",
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    color: "white",
+                    fontSize: "20px",
+                  }}
+                >
+                  ✏️
+                </div>
+                <div>
+                  <Typography.Title level={3} style={{ color: "white", margin: 0 }}>
+                    Chỉnh sửa bản ghi gia hạn
+                  </Typography.Title>
+                  <Typography.Text
+                    style={{ color: "rgba(255,255,255,0.8)", fontSize: "14px" }}
+                  >
+                    Chỉnh sửa số giờ nhập thêm và ghi lại lý do
+                  </Typography.Text>
+                </div>
+              </div>
+            }
+            open={isEditExtensionModalOpen}
+            onCancel={() => {
+              setEditExtensionModalOpen(false);
+              setEditingExtension(null);
+              editExtensionForm.resetFields();
+            }}
+            footer={null}
+            width={500}
+            style={{ top: 20 }}
+            bodyStyle={{ padding: 0 }}
+          >
             <div
               style={{
-                width: "48px",
-                height: "48px",
-                borderRadius: "50%",
                 backgroundColor: "#1890ff",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: "white",
-                fontSize: "20px",
+                padding: "24px",
+                borderRadius: "12px 12px 0 0",
               }}
             >
-              ✏️
-            </div>
-            <div>
               <Typography.Title level={3} style={{ color: "white", margin: 0 }}>
-                Chỉnh sửa bản ghi gia hạn
+                ✏️ Chỉnh sửa bản ghi gia hạn
               </Typography.Title>
               <Typography.Text
-                style={{ color: "rgba(255,255,255,0.8)", fontSize: "14px" }}
+                style={{
+                  color: "rgba(255,255,255,0.8)",
+                  fontSize: "14px",
+                  marginTop: "4px",
+                  display: "block",
+                }}
               >
                 Chỉnh sửa số giờ nhập thêm và ghi lại lý do
               </Typography.Text>
             </div>
-          </div>
-        }
-        open={isEditExtensionModalOpen}
-        onCancel={() => {
-          setEditExtensionModalOpen(false);
-          setEditingExtension(null);
-          editExtensionForm.resetFields();
-        }}
-        footer={null}
-        width={500}
-        style={{ top: 20 }}
-        bodyStyle={{ padding: 0 }}
-      >
-        <div
-          style={{
-            backgroundColor: "#1890ff",
-            padding: "24px",
-            borderRadius: "12px 12px 0 0",
-          }}
-        >
-          <Typography.Title level={3} style={{ color: "white", margin: 0 }}>
-            ✏️ Chỉnh sửa bản ghi gia hạn
-          </Typography.Title>
-          <Typography.Text
-            style={{
-              color: "rgba(255,255,255,0.8)",
-              fontSize: "14px",
-              marginTop: "4px",
-              display: "block",
-            }}
-          >
-            Chỉnh sửa số giờ nhập thêm và ghi lại lý do
-          </Typography.Text>
-        </div>
 
-        <Form
-          form={editExtensionForm}
-          onFinish={(values) => {
-            const newHours = Number(values.newHours) || 0;
-            const reason = values.reason || "";
-            handleSaveEditedExtension(newHours, reason);
-          }}
-          layout="vertical"
-          style={{ padding: "24px" }}
-        >
-          <Space direction="vertical" style={{ width: "100%" }}>
-            {/* Original Hours (read-only) */}
-            <Card
-              style={{
-                backgroundColor: "#f9fafb",
-                border: "2px solid #d1d5db",
+            <Form
+              form={editExtensionForm}
+              onFinish={(values) => {
+                const newHours = Number(values.newHours) || 0;
+                const reason = values.reason || "";
+                handleSaveEditedExtension(newHours, reason);
               }}
+              layout="vertical"
+              style={{ padding: "24px" }}
             >
-              <Typography.Text
-                strong
-                style={{ marginBottom: "8px", display: "block" }}
-              >
-                Số giờ hiện tại
-              </Typography.Text>
-              <div
-                style={{
-                  fontSize: "36px",
-                  fontWeight: "bold",
-                  color: "#36797f",
-                }}
-              >
-                {editingExtension?.["Giờ nhập thêm"]} giờ
-              </div>
-              <Typography.Text
-                type="secondary"
-                style={{ fontSize: "12px", marginTop: "4px" }}
-              >
-                Được ghi lại trên: {editingExtension?.["Ngày nhập"]} at{" "}
-                {editingExtension?.["Giờ nhập"]}
-              </Typography.Text>
-            </Card>
-
-            {/* New Hours */}
-            <Form.Item
-              label="Số giờ mới"
-              name="newHours"
-              rules={[{ required: true, message: "Vui lòng nhập số giờ mới" }]}
-            >
-              <InputNumber
-                min={0}
-                step={0.5}
-                placeholder="Nhập số giờ mới"
-                style={{ width: "100%" }}
-              />
-            </Form.Item>
-
-            {/* Reason */}
-            <Form.Item
-              label="Lý do chỉnh sửa"
-              name="reason"
-              rules={[
-                {
-                  required: true,
-                  message: "Vui lòng cung cấp lý do chỉnh sửa",
-                },
-              ]}
-              extra="Ví dụ: Sửa lỗi nhập liệu, cập nhật số tiền thanh toán, v.v."
-            >
-              <Input.TextArea
-                rows={3}
-                placeholder="Ví dụ: Sửa lỗi nhập liệu, cập nhật số tiền thanh toán, v.v."
-              />
-            </Form.Item>
-
-            {/* Edit History Preview */}
-            {editingExtension?.["Edit History"] &&
-              editingExtension["Edit History"].length > 0 && (
+              <Space direction="vertical" style={{ width: "100%" }}>
+                {/* Original Hours (read-only) */}
                 <Card
                   style={{
-                    backgroundColor: "#fef3c7",
-                    border: "2px solid #f59e0b",
+                    backgroundColor: "#f9fafb",
+                    border: "2px solid #d1d5db",
                   }}
                 >
                   <Typography.Text
                     strong
-                    style={{
-                      color: "#92400e",
-                      marginBottom: "8px",
-                      display: "block",
-                    }}
+                    style={{ marginBottom: "8px", display: "block" }}
                   >
-                    ⚠️ Các lần chỉnh sửa trước (
-                    {editingExtension["Edit History"].length})
+                    Số giờ hiện tại
                   </Typography.Text>
                   <div
                     style={{
-                      maxHeight: "128px",
-                      overflowY: "auto",
-                      fontSize: "12px",
+                      fontSize: "36px",
+                      fontWeight: "bold",
+                      color: "#36797f",
                     }}
                   >
-                    {editingExtension["Edit History"].map(
-                      (edit: any, idx: number) => (
-                        <div
-                          key={idx}
-                          style={{ color: "#374151", marginBottom: "4px" }}
-                        >
-                          {edit["Edited Date"]}: {edit["Old Hours"]}h →{" "}
-                          {edit["New Hours"]}h
-                          <span
-                            style={{ color: "#6b7280", fontStyle: "italic" }}
-                          >
-                            {" "}
-                            ({edit["Reason"]})
-                          </span>
-                        </div>
-                      )
-                    )}
+                    {editingExtension?.["Giờ nhập thêm"]} giờ
                   </div>
+                  <Typography.Text
+                    type="secondary"
+                    style={{ fontSize: "12px", marginTop: "4px" }}
+                  >
+                    Được ghi lại trên: {editingExtension?.["Ngày nhập"]} at{" "}
+                    {editingExtension?.["Giờ nhập"]}
+                  </Typography.Text>
                 </Card>
-              )}
 
-            {/* Current User */}
-            <Form.Item label="Người chỉnh sửa">
-              <Input value={currentUsername} disabled />
-            </Form.Item>
-          </Space>
+                {/* New Hours */}
+                <Form.Item
+                  label="Số giờ mới"
+                  name="newHours"
+                  rules={[{ required: true, message: "Vui lòng nhập số giờ mới" }]}
+                >
+                  <InputNumber
+                    min={0}
+                    step={0.5}
+                    placeholder="Nhập số giờ mới"
+                    style={{ width: "100%" }}
+                  />
+                </Form.Item>
 
-          <Form.Item style={{ marginBottom: 0, marginTop: "24px" }}>
-            <Space style={{ width: "100%", justifyContent: "space-between" }}>
-              <Button
-                onClick={() => {
-                  setEditExtensionModalOpen(false);
-                  setEditingExtension(null);
-                  editExtensionForm.resetFields();
-                }}
-                style={{ flex: 1 }}
-              >
-                Huỷ
+                {/* Reason */}
+                <Form.Item
+                  label="Lý do chỉnh sửa"
+                  name="reason"
+                  rules={[
+                    {
+                      required: true,
+                      message: "Vui lòng cung cấp lý do chỉnh sửa",
+                    },
+                  ]}
+                  extra="Ví dụ: Sửa lỗi nhập liệu, cập nhật số tiền thanh toán, v.v."
+                >
+                  <Input.TextArea
+                    rows={3}
+                    placeholder="Ví dụ: Sửa lỗi nhập liệu, cập nhật số tiền thanh toán, v.v."
+                  />
+                </Form.Item>
+
+                {/* Edit History Preview */}
+                {editingExtension?.["Edit History"] &&
+                  editingExtension["Edit History"].length > 0 && (
+                    <Card
+                      style={{
+                        backgroundColor: "#fef3c7",
+                        border: "2px solid #f59e0b",
+                      }}
+                    >
+                      <Typography.Text
+                        strong
+                        style={{
+                          color: "#92400e",
+                          marginBottom: "8px",
+                          display: "block",
+                        }}
+                      >
+                        ⚠️ Các lần chỉnh sửa trước (
+                        {editingExtension["Edit History"].length})
+                      </Typography.Text>
+                      <div
+                        style={{
+                          maxHeight: "128px",
+                          overflowY: "auto",
+                          fontSize: "12px",
+                        }}
+                      >
+                        {editingExtension["Edit History"].map(
+                          (edit: any, idx: number) => (
+                            <div
+                              key={idx}
+                              style={{ color: "#374151", marginBottom: "4px" }}
+                            >
+                              {edit["Edited Date"]}: {edit["Old Hours"]}h →{" "}
+                              {edit["New Hours"]}h
+                              <span
+                                style={{ color: "#6b7280", fontStyle: "italic" }}
+                              >
+                                {" "}
+                                ({edit["Reason"]})
+                              </span>
+                            </div>
+                          )
+                        )}
+                      </div>
+                    </Card>
+                  )}
+
+                {/* Current User */}
+                <Form.Item label="Người chỉnh sửa">
+                  <Input value={currentUsername} disabled />
+                </Form.Item>
+              </Space>
+
+              <Form.Item style={{ marginBottom: 0, marginTop: "24px" }}>
+                <Space style={{ width: "100%", justifyContent: "space-between" }}>
+                  <Button
+                    onClick={() => {
+                      setEditExtensionModalOpen(false);
+                      setEditingExtension(null);
+                      editExtensionForm.resetFields();
+                    }}
+                    style={{ flex: 1 }}
+                  >
+                    Huỷ
+                  </Button>
+                  <Button type="primary" htmlType="submit" style={{ flex: 1 }}>
+                    💾 Lưu thay đổi
+                  </Button>
+                </Space>
+              </Form.Item>
+            </Form>
+          </Modal>
+
+          {/* Modal hiển thị danh sách lớp */}
+          <Modal
+            title="Danh sách lớp học"
+            open={isClassModalOpen}
+            onCancel={() => setClassModalOpen(false)}
+            footer={[
+              <Button key="close" type="primary" onClick={() => setClassModalOpen(false)}>
+                Đóng
               </Button>
-              <Button type="primary" htmlType="submit" style={{ flex: 1 }}>
-                💾 Lưu thay đổi
-              </Button>
-            </Space>
-          </Form.Item>
-        </Form>
-      </Modal>
-
-      {/* Modal hiển thị danh sách lớp */}
-      <Modal
-        title="Danh sách lớp học"
-        open={isClassModalOpen}
-        onCancel={() => setClassModalOpen(false)}
-        footer={[
-          <Button key="close" type="primary" onClick={() => setClassModalOpen(false)}>
-            Đóng
-          </Button>
-        ]}
-        width={700}
-      >
-        {selectedStudentClasses.length > 0 ? (
-          <div style={{ padding: '16px 0' }}>
-            {selectedStudentClasses.map((classInfo, index) => (
-              <div 
-                key={index}
-                style={{
-                  padding: '16px',
-                  marginBottom: '12px',
-                  backgroundColor: '#f0f5ff',
-                  borderRadius: '8px',
-                  borderLeft: '4px solid #722ed1',
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '12px'
-                }}
-              >
-                <div style={{ 
-                  fontSize: '16px', 
-                  fontWeight: 'bold',
-                  color: '#722ed1',
-                  minWidth: '24px'
-                }}>
-                  {index + 1}.
-                </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ 
-                    fontSize: '15px', 
-                    fontWeight: 600,
-                    color: '#1f2937',
-                    marginBottom: '4px'
-                  }}>
-                    {classInfo.className}
-                  </div>
-                  <div style={{ 
-                    fontSize: '13px', 
-                    color: '#6b7280',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '4px'
-                  }}>
-                    <span style={{ 
-                      backgroundColor: '#722ed1',
-                      color: 'white',
-                      padding: '2px 8px',
-                      borderRadius: '4px',
-                      fontSize: '12px',
-                      fontWeight: 500
+            ]}
+            width={700}
+          >
+            {selectedStudentClasses.length > 0 ? (
+              <div style={{ padding: '16px 0' }}>
+                {selectedStudentClasses.map((classInfo, index) => (
+                  <div
+                    key={index}
+                    style={{
+                      padding: '16px',
+                      marginBottom: '12px',
+                      backgroundColor: '#f0f5ff',
+                      borderRadius: '8px',
+                      borderLeft: '4px solid #722ed1',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '12px'
+                    }}
+                  >
+                    <div style={{
+                      fontSize: '16px',
+                      fontWeight: 'bold',
+                      color: '#722ed1',
+                      minWidth: '24px'
                     }}>
-                      {classInfo.subject}
-                    </span>
+                      {index + 1}.
+                    </div>
+                    <div style={{ flex: 1 }}>
+                      <div style={{
+                        fontSize: '15px',
+                        fontWeight: 600,
+                        color: '#1f2937',
+                        marginBottom: '4px'
+                      }}>
+                        {classInfo.className}
+                      </div>
+                      <div style={{
+                        fontSize: '13px',
+                        color: '#6b7280',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '4px'
+                      }}>
+                        <span style={{
+                          backgroundColor: '#722ed1',
+                          color: 'white',
+                          padding: '2px 8px',
+                          borderRadius: '4px',
+                          fontSize: '12px',
+                          fontWeight: 500
+                        }}>
+                          {classInfo.subject}
+                        </span>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                ))}
               </div>
-            ))}
-          </div>
-        ) : (
-          <div style={{ textAlign: 'center', padding: '32px', color: '#999' }}>
-            Học sinh chưa đăng ký lớp nào
-          </div>
-        )}
-      </Modal>
+            ) : (
+              <div style={{ textAlign: 'center', padding: '32px', color: '#999' }}>
+                Học sinh chưa đăng ký lớp nào
+              </div>
+            )}
+          </Modal>
 
 
-        </TabPane>
-      </Tabs>
+      </div>
     </WrapperContent>
   );
 };
 
-// Component Tab Học phí
+// Component Tab Học phí - HIDDEN per user request (kept unused)
 const StudentTuitionTab: React.FC<{
   students: any[];
   extensionHistory: any[];
@@ -3447,11 +3816,11 @@ const StudentTuitionTab: React.FC<{
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [editingStudent, setEditingStudent] = useState<any>(null);
   const [editDiscount, setEditDiscount] = useState(0);
-  
+
   // State cho inline editing
-  const [editingCell, setEditingCell] = useState<{id: string, field: string} | null>(null);
+  const [editingCell, setEditingCell] = useState<{ id: string, field: string } | null>(null);
   const [tempValue, setTempValue] = useState<number | null>(null);
-  
+
   // Filters for tuition tab
   const [tuitionClassFilter, setTuitionClassFilter] = useState<string>("all");
   const [tuitionStudentSearch, setTuitionStudentSearch] = useState<string>("");
@@ -3470,7 +3839,7 @@ const StudentTuitionTab: React.FC<{
   useEffect(() => {
     const fetchInvoices = async () => {
       try {
-        const response = await fetch(`${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí.json`);
+        const response = await fetch(`${DATABASE_URL_BASE} /datasheet/Phiếu_thu_học_phí.json`);
         const data = await response.json();
         if (data) {
           setStudentInvoices(data);
@@ -3486,7 +3855,7 @@ const StudentTuitionTab: React.FC<{
   useEffect(() => {
     const fetchCourses = async () => {
       try {
-        const response = await fetch(`${DATABASE_URL_BASE}/datasheet/Khóa_học.json`);
+        const response = await fetch(`${DATABASE_URL_BASE} /datasheet/Khóa_học.json`);
         const data = await response.json();
         if (data) {
           const coursesArray = Object.entries(data).map(([id, course]: [string, any]) => ({
@@ -3506,7 +3875,7 @@ const StudentTuitionTab: React.FC<{
   useEffect(() => {
     const fetchClasses = async () => {
       try {
-        const response = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học.json`);
+        const response = await fetch(`${DATABASE_URL_BASE} /datasheet/Lớp_học.json`);
         const data = await response.json();
         if (data) {
           const classesArray = Object.entries(data).map(([id, cls]: [string, any]) => ({
@@ -3526,7 +3895,7 @@ const StudentTuitionTab: React.FC<{
   useEffect(() => {
     const fetchTimetable = async () => {
       try {
-        const response = await fetch(`${DATABASE_URL_BASE}/datasheet/Thời_khoá_biểu.json`);
+        const response = await fetch(`${DATABASE_URL_BASE} /datasheet/Thời_khoá_biểu.json`);
         const data = await response.json();
         if (data) {
           const timetableArray = Object.entries(data).map(([id, entry]: [string, any]) => ({
@@ -3555,7 +3924,7 @@ const StudentTuitionTab: React.FC<{
     const map = new Map<string, any>();
     courses.forEach((course) => {
       // Tạo key từ Khối và Môn học
-      const key = `${course.Khối}-${course["Môn học"]}`;
+      const key = `${course.Khối} -${course["Môn học"]} `;
       if (!map.has(key)) {
         map.set(key, course);
       }
@@ -3566,15 +3935,15 @@ const StudentTuitionTab: React.FC<{
   // Helper function để tìm course nhanh (được định nghĩa trong useMemo)
   const getCoursePrice = (classInfo: any, coursesMap: Map<string, any>) => {
     if (!classInfo) return 0;
-    
+
     // Lấy học phí mỗi buổi từ lớp (ưu tiên từ bảng Lớp học)
     const tuitionPerSession = classInfo["Học phí mỗi buổi"] || 0;
-    
+
     // Nếu không có trong lớp, thử tìm từ courses
     if (!tuitionPerSession) {
-      const directKey = `${classInfo.Khối}-${classInfo["Môn học"]}`;
+      const directKey = `${classInfo.Khối} -${classInfo["Môn học"]} `;
       let course = coursesMap.get(directKey);
-      
+
       // Nếu không tìm thấy, thử với subject options
       if (!course) {
         const classSubject = classInfo["Môn học"];
@@ -3582,19 +3951,19 @@ const StudentTuitionTab: React.FC<{
           (opt) => opt.label === classSubject || opt.value === classSubject
         );
         if (subjectOption) {
-          const altKey1 = `${classInfo.Khối}-${subjectOption.label}`;
-          const altKey2 = `${classInfo.Khối}-${subjectOption.value}`;
+          const altKey1 = `${classInfo.Khối} -${subjectOption.label} `;
+          const altKey2 = `${classInfo.Khối} -${subjectOption.value} `;
           course = coursesMap.get(altKey1) || coursesMap.get(altKey2);
         }
       }
-      
+
       return course?.Giá || 0;
     }
-    
+
     // Áp dụng mức giảm học phí từ lớp (nếu có)
     const classDiscount = classInfo["Mức giảm học phí"] || 0;
     let finalPrice = tuitionPerSession;
-    
+
     if (classDiscount > 0) {
       // Nếu mức giảm là phần trăm (0-100)
       if (classDiscount <= 100) {
@@ -3604,7 +3973,7 @@ const StudentTuitionTab: React.FC<{
         finalPrice = Math.max(0, tuitionPerSession - classDiscount);
       }
     }
-    
+
     return finalPrice;
   };
 
@@ -3615,7 +3984,7 @@ const StudentTuitionTab: React.FC<{
   // Lấy học sinh từ các lớp trong bảng Lớp_học (có thể filter theo lớp được chọn)
   const studentsFromClasses = useMemo(() => {
     const studentIdSet = new Set<string>();
-    
+
     // Nếu có filter theo lớp, chỉ lấy học sinh từ lớp đó
     if (tuitionClassFilter && tuitionClassFilter !== "all") {
       const selectedClass = classes.find((cls) => cls.id === tuitionClassFilter);
@@ -3638,12 +4007,12 @@ const StudentTuitionTab: React.FC<{
         }
       });
     }
-    
+
     // Tìm học sinh từ danh sách students
     const studentsList = Array.from(studentIdSet).map((studentId) => {
       return students.find((s) => s.id === studentId);
     }).filter(Boolean) as any[];
-    
+
     return studentsList;
   }, [classes, students, tuitionClassFilter]);
 
@@ -3656,21 +4025,21 @@ const StudentTuitionTab: React.FC<{
       const studentClasses = student["Lớp học"] || [];
       let totalRevenue = 0;
       let totalSessions = 0;
-      
+
       // Tính học phí cho từng lớp học sinh đang học
       if (Array.isArray(studentClasses)) {
         studentClasses.forEach((classId: string) => {
           const classInfo = classesMap.get(classId);
           if (!classInfo) return;
-          
+
           // Lấy học phí mỗi buổi từ lớp
           const tuitionPerSession = classInfo["Học phí mỗi buổi"] || 0;
           if (!tuitionPerSession) return;
-          
+
           // Lấy mức giảm học phí từ lớp (nếu có)
           const classDiscount = classInfo["Mức giảm học phí"] || 0;
           let pricePerSession = tuitionPerSession;
-          
+
           // Áp dụng mức giảm
           if (classDiscount > 0) {
             if (classDiscount <= 100) {
@@ -3681,12 +4050,12 @@ const StudentTuitionTab: React.FC<{
               pricePerSession = Math.max(0, tuitionPerSession - classDiscount);
             }
           }
-          
+
           // Lấy số buổi học từ lịch học của lớp (tính theo tuần × số tuần trong tháng)
           // Hoặc có thể lấy từ cấu hình lớp nếu có
           const weeklySessions = classInfo["Lịch học"]?.length || 0;
           const sessionsPerMonth = weeklySessions * 4; // Mặc định 4 tuần/tháng
-          
+
           // Tính học phí cho lớp này
           totalRevenue += pricePerSession * sessionsPerMonth;
           totalSessions += sessionsPerMonth;
@@ -3696,25 +4065,25 @@ const StudentTuitionTab: React.FC<{
       // Tìm hóa đơn của học sinh (không theo tháng, dùng key đơn giản)
       const invoiceKey = student.id;
       const invoice = studentInvoices[invoiceKey];
-      
+
       // Hiển thị tất cả học sinh, kể cả không có invoice
       let paidAmount = 0;
       let invoiceStatus = invoice && typeof invoice === "object" ? (invoice.status || "unpaid") : "no_data"; // "no_data" nếu chưa có
       let discount = 0;
       let invoiceRevenue = totalRevenue; // Tính từ bảng Lớp học (cố định)
       let invoiceSessions = totalSessions; // Số buổi tính từ lịch học
-      
+
       // Nếu có invoice trong Firebase, lấy data từ invoice
       if (invoice && typeof invoice === "object") {
         invoiceStatus = invoice.status || "unpaid";
         paidAmount = invoice.status === "paid" ? (invoice.finalAmount || 0) : 0;
         discount = invoice.discount || 0;
-        
+
         // Lấy revenue và sessions từ invoice nếu có
         if (invoice.totalAmount !== undefined && invoice.totalAmount > 0) {
           invoiceRevenue = invoice.totalAmount;
         }
-        
+
         if (invoice.totalSessions !== undefined && invoice.totalSessions > 0) {
           invoiceSessions = invoice.totalSessions;
         }
@@ -3744,12 +4113,12 @@ const StudentTuitionTab: React.FC<{
 
   // Filter monthly stats by student name (class filter đã được xử lý ở studentsFromClasses)
   const filteredMonthlyStats = useMemo(() => {
-    console.log(`📊 Monthly Stats:`, {
+    console.log(`📊 Monthly Stats: `, {
       total: monthlyStats.length,
       statsWithSessions: monthlyStats.filter(s => s.monthSessions > 0).length,
       classFilter: tuitionClassFilter
     });
-    
+
     return monthlyStats.filter((stat) => {
       // Filter by student name (sử dụng debounced value)
       if (tuitionStudentSearchDebounced) {
@@ -3760,7 +4129,7 @@ const StudentTuitionTab: React.FC<{
           return false;
         }
       }
-      
+
       return true;
     });
   }, [monthlyStats, tuitionStudentSearchDebounced]);
@@ -3768,13 +4137,13 @@ const StudentTuitionTab: React.FC<{
   // Handle update field inline
   const handleUpdateField = async (record: any, field: string, value: number | string | null) => {
     if (value === null && field !== "invoiceStatus") return;
-    
+
     try {
       // Không dùng tháng nữa, dùng record.id làm key
       const invoiceKey = record.id;
-      
+
       let updateData: any = {};
-      
+
       if (field === "discount") {
         updateData.discount = value;
       } else if (field === "monthRevenue") {
@@ -3800,9 +4169,9 @@ const StudentTuitionTab: React.FC<{
         setTempValue(null);
         return;
       }
-      
+
       const response = await fetch(
-        `${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí/${invoiceKey}.json`,
+        `${DATABASE_URL_BASE} /datasheet/Phiếu_thu_học_phí / ${invoiceKey}.json`,
         {
           method: "PATCH",
           headers: { "Content-Type": "application/json" },
@@ -3812,17 +4181,17 @@ const StudentTuitionTab: React.FC<{
 
       if (response.ok) {
         message.success("Đã cập nhật");
-        
+
         // Refresh invoices
         const refreshResponse = await fetch(
-          `${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí.json?_=${new Date().getTime()}`,
+          `${DATABASE_URL_BASE} /datasheet/Phiếu_thu_học_phí.json ? _ = ${new Date().getTime()} `,
           { cache: "no-cache" }
         );
         const refreshData = await refreshResponse.json();
         if (refreshData) {
           setStudentInvoices(refreshData);
         }
-        
+
         setEditingCell(null);
         setTempValue(null);
       } else {
@@ -3843,7 +4212,7 @@ const StudentTuitionTab: React.FC<{
 
     Modal.confirm({
       title: "Xác nhận xóa",
-      content: `Bạn có chắc chắn muốn xóa ${selectedTuitionRowKeys.length} phiếu thu đã chọn?`,
+      content: `Bạn có chắc chắn muốn xóa ${selectedTuitionRowKeys.length} phiếu thu đã chọn ? `,
       okText: "Xóa",
       cancelText: "Hủy",
       okType: "danger",
@@ -3852,10 +4221,10 @@ const StudentTuitionTab: React.FC<{
           const deletePromises = selectedTuitionRowKeys.map(async (key) => {
             const record = filteredMonthlyStats.find((s) => s.id === key);
             if (!record) return;
-            
+
             const invoiceKey = record.id;
             const response = await fetch(
-              `${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí/${invoiceKey}.json`,
+              `${DATABASE_URL_BASE} /datasheet/Phiếu_thu_học_phí / ${invoiceKey}.json`,
               { method: "DELETE" }
             );
             return response.ok;
@@ -3864,9 +4233,9 @@ const StudentTuitionTab: React.FC<{
           await Promise.all(deletePromises);
           message.success(`Đã xóa ${selectedTuitionRowKeys.length} phiếu thu`);
           setSelectedTuitionRowKeys([]);
-          
+
           // Reload invoices
-          const invoicesRes = await fetch(`${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí.json`);
+          const invoicesRes = await fetch(`${DATABASE_URL_BASE} /datasheet/Phiếu_thu_học_phí.json`);
           const invoicesData = await invoicesRes.json();
           if (invoicesData) {
             setStudentInvoices(invoicesData);
@@ -3895,8 +4264,8 @@ const StudentTuitionTab: React.FC<{
     // Lấy tất cả các lớp từ bảng Lớp_học
     return classes.map((cls) => ({
       id: cls.id,
-      name: cls["Mã lớp"] && cls["Tên lớp"] 
-        ? `${cls["Mã lớp"]} - ${cls["Tên lớp"]}` 
+      name: cls["Mã lớp"] && cls["Tên lớp"]
+        ? `${cls["Mã lớp"]} - ${cls["Tên lớp"]} `
         : cls["Tên lớp"] || cls.id,
     })).sort((a, b) => a.name.localeCompare(b.name));
   }, [classes]);
@@ -3933,27 +4302,27 @@ const StudentTuitionTab: React.FC<{
         if (!Array.isArray(studentClasses) || studentClasses.length === 0) {
           return <span style={{ color: "#ccc" }}>-</span>;
         }
-        
+
         return (
           <div style={{ lineHeight: "1.5" }}>
             {studentClasses.map((classId: string, idx: number) => {
               const classInfo = classesMap.get(classId);
               if (!classInfo) return null;
-              
+
               const className = classInfo["Tên lớp"] || "";
               const classCode = classInfo["Mã lớp"] || "";
               const subject = classInfo["Môn học"] || "";
               const pricePerSession = getCoursePrice(classInfo, coursesMap);
-              
+
               // Format: "Tên lớp(Mã lớp) Môn học1 buổi[giá] đ/buổi"
               const priceText = pricePerSession ? pricePerSession.toLocaleString("vi-VN") : "0";
-              
+
               return (
                 <span key={classId}>
                   <span
                     onClick={(e) => {
                       e.stopPropagation();
-                      navigate(`/workspace/classes/${classId}/grades`);
+                      navigate(`/ workspace / classes / ${classId}/grades`);
                     }}
                     style={{
                       cursor: "pointer",
@@ -3963,15 +4332,15 @@ const StudentTuitionTab: React.FC<{
                     title={`Click để xem lớp ${className}`}
                   >
                     {className}{classCode ? `(${classCode})` : ""}
-                  </span>
+                  </span >
                   <span style={{ marginLeft: "4px" }}>
                     {subject}1 buổi{priceText} đ/buổi
                   </span>
                   {idx < studentClasses.length - 1 && <span style={{ marginLeft: "8px" }}> </span>}
-                </span>
+                </span >
               );
             })}
-          </div>
+          </div >
         );
       },
     },
@@ -3983,7 +4352,7 @@ const StudentTuitionTab: React.FC<{
       width: 100,
       render: (sessions: number, record: any) => {
         const isEditing = editingCell?.id === record.id && editingCell?.field === "monthSessions";
-        
+
         if (isEditing) {
           return (
             <InputNumber
@@ -3997,7 +4366,7 @@ const StudentTuitionTab: React.FC<{
             />
           );
         }
-        
+
         return (
           <div
             onClick={() => {
@@ -4019,7 +4388,7 @@ const StudentTuitionTab: React.FC<{
       width: 160,
       render: (amount: number, record: any) => {
         const isEditing = editingCell?.id === record.id && editingCell?.field === "monthRevenue";
-        
+
         if (isEditing) {
           return (
             <InputNumber
@@ -4035,7 +4404,7 @@ const StudentTuitionTab: React.FC<{
             />
           );
         }
-        
+
         return (
           <div
             onClick={() => {
@@ -4059,7 +4428,7 @@ const StudentTuitionTab: React.FC<{
       width: 140,
       render: (amount: number, record: any) => {
         const isEditing = editingCell?.id === record.id && editingCell?.field === "discount";
-        
+
         if (isEditing) {
           return (
             <InputNumber
@@ -4076,7 +4445,7 @@ const StudentTuitionTab: React.FC<{
             />
           );
         }
-        
+
         return (
           <div
             onClick={() => {
@@ -4100,7 +4469,7 @@ const StudentTuitionTab: React.FC<{
       width: 160,
       render: (amount: number, record: any) => {
         const isEditing = editingCell?.id === record.id && editingCell?.field === "finalMonthRevenue";
-        
+
         if (isEditing) {
           return (
             <InputNumber
@@ -4116,7 +4485,7 @@ const StudentTuitionTab: React.FC<{
             />
           );
         }
-        
+
         return (
           <div
             onClick={() => {
@@ -4142,9 +4511,9 @@ const StudentTuitionTab: React.FC<{
         if (record.monthSessions === 0) {
           return <Tag color="default">Không học</Tag>;
         }
-        
+
         const isEditing = editingCell?.id === record.id && editingCell?.field === "invoiceStatus";
-        
+
         if (isEditing) {
           return (
             <Select
@@ -4164,7 +4533,7 @@ const StudentTuitionTab: React.FC<{
             </Select>
           );
         }
-        
+
         return (
           <div
             onClick={() => {
@@ -4192,7 +4561,7 @@ const StudentTuitionTab: React.FC<{
       width: 160,
       render: (amount: number, record: any) => {
         const isEditing = editingCell?.id === record.id && editingCell?.field === "totalRevenue";
-        
+
         if (isEditing) {
           return (
             <InputNumber
@@ -4208,7 +4577,7 @@ const StudentTuitionTab: React.FC<{
             />
           );
         }
-        
+
         return (
           <div
             onClick={() => {
@@ -4417,9 +4786,9 @@ const StudentTuitionTab: React.FC<{
             />
           </Col>
         </Row>
-        
+
         <Divider style={{ margin: "16px 0" }} />
-        
+
         <Row gutter={[16, 16]}>
           <Col xs={12} sm={12} md={8} lg={4}>
             <Statistic
@@ -4459,7 +4828,7 @@ const StudentTuitionTab: React.FC<{
         </Row>
       </Card>
 
-      <Card 
+      <Card
         title="Danh sách học phí"
         extra={
           selectedTuitionRowKeys.length > 0 && (
@@ -4487,7 +4856,7 @@ const StudentTuitionTab: React.FC<{
           columns={columns}
           rowKey="id"
           rowSelection={tuitionRowSelection}
-          pagination={{ 
+          pagination={{
             pageSize: 10,
             showSizeChanger: true,
             showTotal: (total) => `Tổng ${total} học sinh`,
@@ -4547,11 +4916,11 @@ const StudentTuitionTab: React.FC<{
         }}
         onOk={async () => {
           if (!editingStudent) return;
-          
+
           try {
             // Không dùng tháng nữa, dùng key đơn giản
             const invoiceKey = editingStudent.id;
-            
+
             // Update discount in Firebase
             const response = await fetch(
               `${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí/${invoiceKey}.json`,
@@ -4564,7 +4933,7 @@ const StudentTuitionTab: React.FC<{
 
             if (response.ok) {
               message.success("Đã cập nhật miễn giảm học phí");
-              
+
               // Refresh invoices
               const refreshResponse = await fetch(
                 `${DATABASE_URL_BASE}/datasheet/Phiếu_thu_học_phí.json?_=${new Date().getTime()}`,
@@ -4574,7 +4943,7 @@ const StudentTuitionTab: React.FC<{
               if (refreshData) {
                 setStudentInvoices(refreshData);
               }
-              
+
               setEditModalOpen(false);
               setEditingStudent(null);
               setEditDiscount(0);
@@ -4630,7 +4999,148 @@ const StudentTuitionTab: React.FC<{
           </Space>
         )}
       </Modal>
+
+      {/* Edit Stars Modal - Commented out due to missing dependencies */}
+      {/*
+      {console.log("🌟 Rendering Edit Stars Modal, isOpen:", isEditStarsModalOpen, "editingStudent:", editingStarsStudent?.["Họ và tên"])}
+      <Modal
+        title={`Chỉnh sửa sao thưởng - ${editingStarsStudent?.["Họ và tên"] || ""}`}
+        open={isEditStarsModalOpen}
+        onCancel={() => {
+          console.log("🌟 Modal cancelled");
+          setEditStarsModalOpen(false);
+          setEditingStarsStudent(null);
+          editStarsForm.resetFields();
+        }}
+        footer={null}
+        width={700}
+        getContainer={false}
+        destroyOnClose={true}
+      >
+        <Form
+          form={editStarsForm}
+          layout="vertical"
+          onFinish={(values) => {
+            handleSaveStars(values.adjustment, values.reason);
+          }}
+        >
+          <Form.Item label="Tổng sao hiện tại" name="currentTotal">
+            <InputNumber
+              disabled
+              style={{ width: "100%" }}
+              addonAfter="⭐"
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Điều chỉnh (số dương để thêm, số âm để trừ)"
+            name="adjustment"
+            rules={[
+              { required: true, message: "Vui lòng nhập số sao điều chỉnh" },
+            ]}
+          >
+            <InputNumber
+              style={{ width: "100%" }}
+              placeholder="Nhập số sao (ví dụ: +5 hoặc -3)"
+              addonAfter="⭐"
+            />
+          </Form.Item>
+
+          <Form.Item
+            label="Lý do"
+            name="reason"
+            rules={[{ required: true, message: "Vui lòng nhập lý do" }]}
+          >
+            <Input.TextArea
+              rows={3}
+              placeholder="Nhập lý do điều chỉnh sao thưởng"
+            />
+          </Form.Item>
+
+          <Space style={{ width: "100%", justifyContent: "flex-end" }}>
+            <Button
+              danger
+              onClick={handleResetStars}
+            >
+              Reset về 0
+            </Button>
+            <Button onClick={() => {
+              setEditStarsModalOpen(false);
+              setEditingStarsStudent(null);
+              editStarsForm.resetFields();
+            }}>
+              Hủy
+            </Button>
+            <Button type="primary" htmlType="submit">
+              Lưu
+            </Button>
+          </Space>
+        </Form>
+
+        <Divider>Lịch sử chỉnh sửa</Divider>
+
+        <Table
+          dataSource={starsHistory.filter(
+            (record) => record.studentId === editingStarsStudent?.id
+          )}
+          columns={[
+            {
+              title: "Ngày",
+              dataIndex: "Ngày chỉnh sửa",
+              key: "date",
+              width: 100,
+            },
+            {
+              title: "Thay đổi",
+              dataIndex: "Thay đổi",
+              key: "change",
+              width: 80,
+              render: (change) => (
+                <Tag color={change > 0 ? "green" : change < 0 ? "red" : "default"}>
+                  {change > 0 ? `+${change}` : change} ⭐
+                </Tag>
+              ),
+            },
+            {
+              title: "Trước → Sau",
+              key: "beforeAfter",
+              width: 100,
+              render: (_, record) => (
+                <span>
+                  {record["Số sao trước"]} → {record["Số sao sau"]}
+                </span>
+              ),
+            },
+            {
+              title: "Lý do",
+              dataIndex: "Lý do",
+              key: "reason",
+            },
+            {
+              title: "Người sửa",
+              dataIndex: "Người chỉnh sửa",
+              key: "editor",
+              width: 120,
+            },
+            {
+              title: "Loại",
+              dataIndex: "Loại thay đổi",
+              key: "type",
+              width: 80,
+              render: (type) => (
+                <Tag color={type === "Reset" ? "red" : "blue"}>
+                  {type}
+                </Tag>
+              ),
+            },
+          ]}
+          pagination={{ pageSize: 5 }}
+          size="small"
+        />
+      </Modal>
+      */}
     </div>
+
   );
 };
 

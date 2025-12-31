@@ -21,6 +21,8 @@ import {
   Upload,
   Image,
   Popconfirm,
+  Dropdown,
+  Menu,
 } from "antd";
 import type { UploadFile } from "antd";
 import {
@@ -31,6 +33,7 @@ import {
   PrinterOutlined,
   FileImageOutlined,
   DeleteOutlined,
+  MoreOutlined,
 } from "@ant-design/icons";
 import { EditOutlined } from "@ant-design/icons";
 import React, { useState, useEffect, useMemo } from "react";
@@ -74,7 +77,6 @@ interface AttendanceSession {
   "Student IDs"?: string[];
   "Điểm danh"?: any[];
   "Phụ cấp di chuyển"?: number;
-  "Nội dung buổi học"?: string;
   [key: string]: any;
 }
 
@@ -167,9 +169,15 @@ const InvoicePage = () => {
 
   // Row selection state for bulk delete (unpaid tab)
   const [selectedRowKeys, setSelectedRowKeys] = useState<React.Key[]>([]);
-  
+
   // Row selection state for bulk delete (paid tab)
   const [selectedPaidRowKeys, setSelectedPaidRowKeys] = useState<React.Key[]>([]);
+
+  // State for QR preference in invoice modal
+  const [includeQRInInvoice, setIncludeQRInInvoice] = useState(true);
+
+  // State for QR preference per invoice (for table)
+  const [invoiceQRPreferences, setInvoiceQRPreferences] = useState<Record<string, boolean>>({});
 
   // Edit invoice modal state (restore edit functionality)
   const [editingInvoice, setEditingInvoice] = useState<StudentInvoice | null>(
@@ -218,22 +226,22 @@ const InvoicePage = () => {
     Record<
       string,
       | {
-          status: "paid" | "unpaid";
-          discount?: number;
-          // Full invoice data for paid records
-          studentId?: string;
-          studentName?: string;
-          studentCode?: string;
-          month?: number;
-          year?: number;
-          totalSessions?: number;
-          totalAmount?: number;
-          finalAmount?: number;
-          paidAt?: string;
-          sessions?: any[];
-          invoiceImage?: string;
-          sessionPrices?: { [sessionId: string]: number }; // Custom prices per session
-        }
+        status: "paid" | "unpaid";
+        discount?: number;
+        // Full invoice data for paid records
+        studentId?: string;
+        studentName?: string;
+        studentCode?: string;
+        month?: number;
+        year?: number;
+        totalSessions?: number;
+        totalAmount?: number;
+        finalAmount?: number;
+        paidAt?: string;
+        sessions?: any[];
+        invoiceImage?: string;
+        sessionPrices?: { [sessionId: string]: number }; // Custom prices per session
+      }
       | "paid"
       | "unpaid"
     >
@@ -244,29 +252,29 @@ const InvoicePage = () => {
       | "paid"
       | "unpaid"
       | {
-          status: "paid" | "unpaid";
-          // Full salary data for paid records
-          teacherId?: string;
-          teacherName?: string;
-          teacherCode?: string;
-          bienChe?: string;
-          month?: number;
-          year?: number;
-          totalSessions?: number;
-          salaryPerSession?: number;
-          totalHours?: number;
-          totalMinutes?: number;
-          totalSalary?: number;
-          totalAllowance?: number;
-          paidAt?: string;
-          bankInfo?: {
-            bank: string | null;
-            accountNo: string | null;
-            accountName: string | null;
-          };
-          invoiceImage?: string;
-          sessions?: any[];
-        }
+        status: "paid" | "unpaid";
+        // Full salary data for paid records
+        teacherId?: string;
+        teacherName?: string;
+        teacherCode?: string;
+        bienChe?: string;
+        month?: number;
+        year?: number;
+        totalSessions?: number;
+        salaryPerSession?: number;
+        totalHours?: number;
+        totalMinutes?: number;
+        totalSalary?: number;
+        totalAllowance?: number;
+        paidAt?: string;
+        bankInfo?: {
+          bank: string | null;
+          accountNo: string | null;
+          accountName: string | null;
+        };
+        invoiceImage?: string;
+        sessions?: any[];
+      }
     >
   >({});
 
@@ -401,13 +409,13 @@ const InvoicePage = () => {
   // Load student invoices directly from Firebase (populated by attendance save)
   const studentInvoices = useMemo(() => {
     console.log(`📋 Loading invoices from Firebase for month ${studentMonth + 1}/${studentYear}`);
-    
+
     const invoicesList: StudentInvoice[] = [];
 
     // Load all invoices from Firebase that match the selected month/year
     Object.entries(studentInvoiceStatus).forEach(([key, data]) => {
       if (!data) return;
-      
+
       // Skip deleted invoices
       if (typeof data === "object" && data !== null && (data as any).deleted === true) {
         console.log(`⏭️ Skipping deleted invoice: ${key}`);
@@ -441,18 +449,18 @@ const InvoicePage = () => {
       let classCode = "";
       let subject = "";
       let pricePerSession = 0;
-      
+
       if (invoiceData.sessions && invoiceData.sessions.length > 0) {
         const firstSession = invoiceData.sessions[0];
         className = firstSession["Tên lớp"] || "";
         classCode = firstSession["Mã lớp"] || "";
-        
+
         // Get subject from class info
         const classId = firstSession["Class ID"];
         const classInfo = classes.find((c) => c.id === classId);
         if (classInfo) {
           subject = classInfo["Môn học"] || "";
-          
+
           // Get price from course
           const course = courses.find((c) => {
             if (c.Khối !== classInfo.Khối) return false;
@@ -495,7 +503,7 @@ const InvoicePage = () => {
     console.log(`📊 Total invoices loaded from Firebase: ${invoicesList.length}`);
     console.log(`📊 Unpaid: ${invoicesList.filter(i => i.status !== "paid").length}`);
     console.log(`📊 Paid: ${invoicesList.filter(i => i.status === "paid").length}`);
-    
+
     return invoicesList;
   }, [
     studentInvoiceStatus,
@@ -562,8 +570,19 @@ const InvoicePage = () => {
 
         const bienChe = teacher["Biên chế"] || "Chưa phân loại";
 
-        // Get salary per session from teacher info
-        const salaryPerSession = Number(teacher["Lương theo buổi"]) || 0;
+        // Prefer per-session salary from class, fallback to session then teacher info
+        const parseCurrency = (value: unknown) => {
+          if (value === undefined || value === null) return 0;
+          const num = Number(String(value).replace(/[^0-9.-]+/g, ""));
+          return Number.isFinite(num) ? num : 0;
+        };
+
+        const classId = session["Class ID"];
+        const classInfo = classes.find((c) => c.id === classId);
+        const salaryPerSession =
+          parseCurrency(classInfo?.["Lương GV"]) ||
+          parseCurrency(session["Lương GV"]) ||
+          parseCurrency(teacher["Lương theo buổi"]);
 
         if (!salariesMap[key]) {
           // Normalize status - handle both direct value and nested object
@@ -594,7 +613,7 @@ const InvoicePage = () => {
 
         salariesMap[key].totalSessions++;
         salariesMap[key].totalSalary += salaryPerSession;
-        
+
         // Calculate hours and minutes from session
         const startTime = session["Giờ bắt đầu"];
         const endTime = session["Giờ kết thúc"];
@@ -604,11 +623,11 @@ const InvoicePage = () => {
           const durationMinutes = (endHour * 60 + endMin) - (startHour * 60 + startMin);
           salariesMap[key].totalMinutes += durationMinutes;
         }
-        
+
         // Calculate travel allowance
         const travelAllowance = Number(session["Phụ cấp di chuyển"]) || 0;
         salariesMap[key].totalAllowance += travelAllowance;
-        
+
         salariesMap[key].sessions.push(session);
       }
     });
@@ -635,8 +654,8 @@ const InvoicePage = () => {
   const uniqueClasses = useMemo(() => {
     return classes.map((cls) => ({
       id: cls.id,
-      name: cls["Mã lớp"] && cls["Tên lớp"] 
-        ? `${cls["Mã lớp"]} - ${cls["Tên lớp"]}` 
+      name: cls["Mã lớp"] && cls["Tên lớp"]
+        ? `${cls["Mã lớp"]} - ${cls["Tên lớp"]}`
         : cls["Tên lớp"] || cls.id,
     })).sort((a, b) => a.name.localeCompare(b.name));
   }, [classes]);
@@ -654,11 +673,11 @@ const InvoicePage = () => {
     if (!studentInvoices || !Array.isArray(studentInvoices)) {
       return [];
     }
-    
+
     try {
       return studentInvoices.filter((invoice) => {
         if (!invoice) return false;
-        
+
         // Filter by search term (name)
         const matchSearch =
           !studentSearchTerm ||
@@ -673,18 +692,18 @@ const InvoicePage = () => {
 
         // Filter by month
         const matchMonth = invoice.month !== undefined && invoice.month === studentMonth;
-        
+
         // Filter by year
         const matchYear = invoice.year !== undefined && invoice.year === studentYear;
 
         // Filter by status
-        const matchStatus = 
+        const matchStatus =
           studentStatusFilter === "all" ||
           (studentStatusFilter === "paid" && invoice.status === "paid") ||
           (studentStatusFilter === "unpaid" && invoice.status !== "paid");
 
         // Filter by class - check if invoice has sessions in selected classes
-        const matchClass = 
+        const matchClass =
           studentClassFilter.length === 0 ||
           (invoice.sessions && Array.isArray(invoice.sessions) && invoice.sessions.some((session: any) => {
             if (!session) return false;
@@ -693,7 +712,7 @@ const InvoicePage = () => {
           }));
 
         // Filter by teacher - check if invoice has sessions with selected teacher
-        const matchTeacher = 
+        const matchTeacher =
           studentTeacherFilter === "all" ||
           (invoice.sessions && Array.isArray(invoice.sessions) && invoice.sessions.some((session: any) => {
             if (!session) return false;
@@ -719,7 +738,7 @@ const InvoicePage = () => {
 
     filteredStudentInvoices.forEach((invoice) => {
       const key = invoice.studentId;
-      
+
       if (!groupMap.has(key)) {
         groupMap.set(key, {
           studentId: invoice.studentId,
@@ -963,13 +982,82 @@ const InvoicePage = () => {
     });
   };
 
+  // Inline update total amount for grouped invoices
+  const handleInlineUpdateTotalAmount = async (
+    record: GroupedStudentInvoice,
+    newTotalAmount: number
+  ) => {
+    try {
+      const safeTotal = Math.max(0, Math.round(newTotalAmount || 0));
+      const currentTotal = record.invoices.reduce(
+        (sum, inv) => sum + (inv.totalAmount || 0),
+        0
+      );
+
+      if (currentTotal === 0) {
+        message.warning("Tổng hiện tại bằng 0, không thể phân bổ");
+        return;
+      }
+
+      const factor = safeTotal / currentTotal;
+
+      const updatePromises = record.invoices.map((invoice) => {
+        const newInvoiceTotal = Math.max(
+          0,
+          Math.round((invoice.totalAmount || 0) * factor)
+        );
+        const newFinal = Math.max(
+          0,
+          Math.round(newInvoiceTotal - (invoice.discount || 0))
+        );
+        const invoiceRef = ref(
+          database,
+          `datasheet/Phiếu_thu_học_phí/${invoice.id}`
+        );
+        return update(invoiceRef, {
+          totalAmount: newInvoiceTotal,
+          finalAmount: newFinal,
+        }).then(() => ({
+          id: invoice.id,
+          totalAmount: newInvoiceTotal,
+          finalAmount: newFinal,
+        }));
+      });
+
+      const updated = await Promise.all(updatePromises);
+
+      // Update local state immediately for printing
+      setStudentInvoiceStatus((prev) => {
+        const next = { ...prev } as any;
+        updated.forEach((item) => {
+          const current = next[item.id];
+          if (typeof current === "object" && current !== null) {
+            next[item.id] = {
+              ...current,
+              totalAmount: item.totalAmount,
+              finalAmount: item.finalAmount,
+            };
+          }
+        });
+        return next;
+      });
+
+      // Trigger UI refresh
+      setRefreshTrigger((prev) => prev + 1);
+      message.success("Đã cập nhật tổng tiền");
+    } catch (error) {
+      console.error("Error updating total amount:", error);
+      message.error("Lỗi khi cập nhật tổng tiền");
+    }
+  };
+
   // Helper function to get price for a session
   const getSessionPrice = (session: AttendanceSession): number => {
     const classId = session["Class ID"];
     const classInfo = classes.find((c) => c.id === classId);
-    
+
     if (!classInfo) return 0;
-    
+
     const course = courses.find((c) => {
       if (c.Khối !== classInfo.Khối) return false;
       const classSubject = classInfo["Môn học"];
@@ -983,7 +1071,7 @@ const InvoicePage = () => {
       }
       return false;
     });
-    
+
     return course?.Giá || classInfo?.["Học phí mỗi buổi"] || 0;
   };
 
@@ -1014,20 +1102,20 @@ const InvoicePage = () => {
       const sessionsToUse: AttendanceSession[] = updatedSessions && updatedSessions.length > 0
         ? updatedSessions
         : (currentInvoice.sessions || []).map((session: AttendanceSession) => {
-            const newPrice = sessionPrices[session.id];
-            if (newPrice !== undefined) {
-              // Store price under sanitized key to avoid invalid Firebase keys
-              return { ...session, [sanitizeKey("Giá/buổi")]: newPrice } as AttendanceSession;
-            }
-            return session;
-          });
+          const newPrice = sessionPrices[session.id];
+          if (newPrice !== undefined) {
+            // Store price under sanitized key to avoid invalid Firebase keys
+            return { ...session, [sanitizeKey("Giá/buổi")]: newPrice } as AttendanceSession;
+          }
+          return session;
+        });
 
       // Calculate new total from sessionsToUse
       const newTotalAmount = sessionsToUse.reduce((sum, s) => sum + (Number(getSafeField(s, "Giá/buổi") || 0)), 0);
       const newFinalAmount = Math.max(0, newTotalAmount - discount);
 
       const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${invoiceId}`);
-      
+
       const updateData = {
         ...(typeof currentData === "object" ? currentData : { status: currentStatus || "unpaid" }),
         discount,
@@ -1098,7 +1186,7 @@ const InvoicePage = () => {
           : { status: currentStatus || "unpaid", discount, finalAmount };
 
       await update(invoiceRef, updateData);
-      
+
       // Trigger recalculation of table
       setRefreshTrigger((prev) => prev + 1);
     } catch (error) {
@@ -1204,10 +1292,80 @@ const InvoicePage = () => {
 
   // View and export invoice
   const viewStudentInvoice = (invoice: StudentInvoice) => {
-    const content = generateStudentInvoiceHTML(invoice);
-    const isPaid = invoice.status === "paid";
-    const modal = Modal.info({
-      title: `Phiếu thu học phí - ${invoice.studentName}`,
+    let currentInvoiceData = { ...invoice };
+    let currentIncludeQR = true; // Local state for QR preference
+    let modal: any = null;
+
+    // Get the latest data from state
+    const getLatestInvoiceData = () => {
+      const latestInvoiceData = studentInvoiceStatus[invoice.id];
+      let updatedInvoice = { ...currentInvoiceData };
+      
+      // Merge with latest data if available
+      if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
+        updatedInvoice = {
+          ...currentInvoiceData,
+          studentName: latestInvoiceData.studentName || currentInvoiceData.studentName,
+          studentCode: latestInvoiceData.studentCode || currentInvoiceData.studentCode,
+          totalSessions: latestInvoiceData.totalSessions || currentInvoiceData.totalSessions,
+          totalAmount: latestInvoiceData.totalAmount || currentInvoiceData.totalAmount,
+          discount: latestInvoiceData.discount || currentInvoiceData.discount,
+          finalAmount: latestInvoiceData.finalAmount || currentInvoiceData.finalAmount,
+          sessions: latestInvoiceData.sessions || currentInvoiceData.sessions
+        };
+      }
+      return updatedInvoice;
+    };
+
+    const refreshModal = () => {
+      currentInvoiceData = getLatestInvoiceData();
+      const freshContent = generateStudentInvoiceHTML(currentInvoiceData, currentIncludeQR);
+      
+      // Update modal content
+      const modalElement = document.getElementById(`student-invoice-${invoice.id}`);
+      if (modalElement) {
+        modalElement.innerHTML = freshContent;
+      }
+      
+      // Update modal title
+      if (modal) {
+        modal.update({
+          title: `Phiếu thu học phí - ${currentInvoiceData.studentName}`,
+        });
+      }
+    };
+
+    const initialInvoiceData = getLatestInvoiceData();
+    const content = generateStudentInvoiceHTML(initialInvoiceData, currentIncludeQR);
+    const isPaid = initialInvoiceData.status === "paid";
+
+    // Add message listener for auto-save from iframe
+    const handleMessage = (event: MessageEvent) => {
+      if (event.data.type === 'SAVE_INVOICE_DATA') {
+        const updatedData = event.data.data;
+        console.log('Received invoice data update:', updatedData);
+        
+        // Update Firebase with the changes
+        updateInvoiceFromEditableForm(updatedData);
+        
+        // Update current invoice data
+        currentInvoiceData = {
+          ...currentInvoiceData,
+          studentName: updatedData.studentName || currentInvoiceData.studentName,
+          studentCode: updatedData.studentCode || currentInvoiceData.studentCode
+        };
+        
+        // Refresh modal with new data after a short delay to allow Firebase update
+        setTimeout(() => {
+          refreshModal();
+        }, 1000);
+      }
+    };
+
+    window.addEventListener('message', handleMessage);
+
+    modal = Modal.info({
+      title: `Phiếu thu học phí - ${initialInvoiceData.studentName}`,
       width: 900,
       maskClosable: true,
       closable: true,
@@ -1218,23 +1376,96 @@ const InvoicePage = () => {
         />
       ),
       footer: (
-        <Space>
-          <Button onClick={() => modal.destroy()}>Đóng</Button>
-          {!isPaid && (
+        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
+          <Space size="small" align="center">
+            <span style={{ fontWeight: 500 }}>Hiển thị QR:</span>
             <Button
-              icon={<PrinterOutlined />}
-              onClick={() => printInvoice(content)}
+              type={currentIncludeQR ? 'primary' : 'default'}
+              onClick={() => {
+                currentIncludeQR = true;
+                refreshModal();
+              }}
+              size="small"
             >
-              In phiếu
+              ✓ Có QR
             </Button>
-          )}
+            <Button
+              type={!currentIncludeQR ? 'primary' : 'default'}
+              onClick={() => {
+                currentIncludeQR = false;
+                refreshModal();
+              }}
+              size="small"
+            >
+              ✓ Không QR
+            </Button>
+          </Space>
+          <Space>
+            {!isPaid && (
+              <Button
+                type="primary"
+                icon={<PrinterOutlined />}
+                onClick={() => {
+                  // Always get the latest data before printing
+                  const latestData = getLatestInvoiceData();
+                  printInvoice(latestData, currentIncludeQR);
+                }}
+              >
+                In phiếu
+              </Button>
+            )}
+            <Button onClick={() => {
+              window.removeEventListener('message', handleMessage);
+              modal.destroy();
+            }}>Đóng</Button>
+          </Space>
         </Space>
       ),
     });
   };
 
+  // Function to update invoice data from editable form
+  const updateInvoiceFromEditableForm = async (updatedData: any) => {
+    try {
+      const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${updatedData.id}`);
+      
+      // Get current data first
+      const currentData = studentInvoiceStatus[updatedData.id];
+      if (typeof currentData === "object" && currentData !== null) {
+        // Update only the changed fields
+        const updateFields: any = {};
+        
+        if (updatedData.studentName !== currentData.studentName) {
+          updateFields.studentName = updatedData.studentName;
+        }
+        if (updatedData.studentCode !== currentData.studentCode) {
+          updateFields.studentCode = updatedData.studentCode;
+        }
+        
+        if (Object.keys(updateFields).length > 0) {
+          await update(invoiceRef, updateFields);
+          message.success('Đã lưu thay đổi tự động');
+          
+          // Update local state immediately so print function uses new data
+          setStudentInvoiceStatus(prev => ({
+            ...prev,
+            [updatedData.id]: {
+              ...currentData,
+              ...updateFields
+            }
+          }));
+          
+          // Refresh the invoice list
+          setRefreshTrigger(prev => prev + 1);
+        }
+      }
+    } catch (error) {
+      console.error('Error updating invoice from form:', error);
+      message.error('Lỗi khi lưu thay đổi');
+    }
+  };
+
   const viewTeacherSalary = (salary: TeacherSalary) => {
-    const content = generateTeacherSalaryHTML(salary);
     const modal = Modal.info({
       title: `Phiếu lương giáo viên - ${salary.teacherName}`,
       width: 800,
@@ -1243,7 +1474,7 @@ const InvoicePage = () => {
       content: (
         <div
           id={`teacher-salary-${salary.id}`}
-          dangerouslySetInnerHTML={{ __html: content }}
+          dangerouslySetInnerHTML={{ __html: generateTeacherSalaryHTML(salary) }}
         />
       ),
       footer: (
@@ -1251,13 +1482,112 @@ const InvoicePage = () => {
           <Button onClick={() => modal.destroy()}>Đóng</Button>
           <Button
             icon={<PrinterOutlined />}
-            onClick={() => printInvoice(content)}
+            onClick={() => {
+              // Generate fresh content for printing
+              const freshContent = generateTeacherSalaryHTML(salary);
+              const printWindow = window.open("", "_blank");
+              if (!printWindow) return;
+              printWindow.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                  <meta charset="UTF-8">
+                  <title>In phiếu lương</title>
+                  <style>
+                    body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+                    @media print { body { margin: 0; } }
+                  </style>
+                </head>
+                <body>${freshContent}</body>
+                </html>
+              `);
+              printWindow.document.close();
+              setTimeout(() => printWindow.print(), 500);
+            }}
           >
             In phiếu
           </Button>
         </Space>
       ),
     });
+  };
+
+  // Calculate total accumulated debt for a student across all previous months
+  const calculateStudentTotalDebt = (studentId: string, currentMonth: number, currentYear: number): number => {
+    let totalDebt = 0;
+    
+    // Check persisted invoices from Firebase
+    Object.entries(studentInvoiceStatus).forEach(([key, data]) => {
+      if (!data || typeof data === "string") return;
+      const sid = data.studentId;
+      const m = data.month ?? null;
+      const y = data.year ?? null;
+      if (!sid || m === null || y === null) return;
+      
+      // Only consider invoices for the current student
+      if (sid !== studentId) return;
+      
+      // Only consider months strictly before the current month/year
+      if (y < currentYear || (y === currentYear && m < currentMonth)) {
+        const status = data.status || "unpaid";
+        if (status !== "paid") {
+          const amt = data.finalAmount ?? data.totalAmount ?? 0;
+          totalDebt += amt;
+        }
+      }
+    });
+    
+    // Also check sessions that may not have persisted invoices
+    sessions.forEach((session) => {
+      if (!session["Ngày"] || !session["Điểm danh"]) return;
+      const sessionDate = new Date(session["Ngày"]);
+      const sMonth = sessionDate.getMonth();
+      const sYear = sessionDate.getFullYear();
+      
+      // Only consider months strictly before current month/year
+      if (!(sYear < currentYear || (sYear === currentYear && sMonth < currentMonth))) return;
+      
+      // Check if student was present in this session
+      const present = Array.isArray(session["Điểm danh"]) &&
+        session["Điểm danh"].some(
+          (r: any) => r["Student ID"] === studentId && r["Có mặt"]
+        );
+      if (!present) return;
+      
+      // Find class/course price
+      const classId = session["Class ID"];
+      const classInfo = classes.find((c) => c.id === classId);
+      let pricePerSession = 0;
+      if (classInfo) {
+        const course = courses.find((c) => {
+          if (c.Khối !== classInfo.Khối) return false;
+          const classSubject = classInfo["Môn học"];
+          const courseSubject = c["Môn học"];
+          if (classSubject === courseSubject) return true;
+          const subjectOption = subjectOptions.find(
+            (opt) => opt.label === classSubject || opt.value === classSubject
+          );
+          if (subjectOption) {
+            return (
+              courseSubject === subjectOption.label ||
+              courseSubject === subjectOption.value
+            );
+          }
+          return false;
+        });
+        pricePerSession = course?.Giá || 0;
+      }
+      
+      // Check if there's a persisted invoice for this month and it's paid
+      const persistedKey = `${studentId}-${sMonth}-${sYear}`;
+      const persisted = studentInvoiceStatus[persistedKey];
+      const persistedStatus = typeof persisted === "object" ? persisted.status : persisted;
+      if (persistedStatus === "paid") return;
+      
+      totalDebt += pricePerSession;
+    });
+    
+    return totalDebt;
   };
 
   // Generate VietQR URL with hardcoded bank info for students
@@ -1308,7 +1638,48 @@ const InvoicePage = () => {
     )}&accountName=${encodeURIComponent(accountName)}`;
   };
 
-  const generateStudentInvoiceHTML = (invoice: StudentInvoice) => {
+  const generateStudentInvoiceHTML = (invoice: StudentInvoice, includeQR: boolean = true) => {
+    // Helper to generate decor border HTML
+    const generateDecorIcons = () => {
+      let html = "";
+      const schoolIcons = [
+        "fa-book",
+        "fa-book-open",
+        "fa-ruler-horizontal",
+        "fa-pencil-alt",
+        "fa-drafting-compass",
+        "fa-briefcase",
+        "fa-chalkboard",
+        "fa-calculator",
+        "fa-eraser",
+        "fa-pen-nib",
+        "fa-graduation-cap",
+      ];
+      const grayColors = ["c-gray-1", "c-gray-2", "c-gray-3", "c-gray-4"];
+      const countH = 9;
+      const countV = 12;
+
+      const createIcon = (style: string) => {
+        const iconClass =
+          schoolIcons[Math.floor(Math.random() * schoolIcons.length)];
+        const colorClass =
+          grayColors[Math.floor(Math.random() * grayColors.length)];
+        const rot = Math.random() * 60 - 30;
+        return `<i class="fas ${iconClass} decor-icon ${colorClass}" style="${style}; transform: rotate(${rot}deg);"></i>`;
+      };
+
+      for (let i = 0; i < countH; i++)
+        html += createIcon(`top: 5px; left: ${(i / countH) * 100 + 4}%`);
+      for (let i = 0; i < countH; i++)
+        html += createIcon(`bottom: 5px; left: ${(i / countH) * 100 + 4}%`);
+      for (let i = 0; i < countV; i++)
+        html += createIcon(`left: 5px; top: ${(i / countV) * 100 + 4}%`);
+      for (let i = 0; i < countV; i++)
+        html += createIcon(`right: 5px; top: ${(i / countV) * 100 + 4}%`);
+
+      return html;
+    };
+
     // Group sessions by class and calculate totals
     const classSummary: Record<
       string,
@@ -1391,6 +1762,8 @@ const InvoicePage = () => {
       const m = data.month ?? null;
       const y = data.year ?? null;
       if (!sid || m === null || y === null) return;
+      // Only consider invoices for the current student
+      if (sid !== invoice.studentId) return;
       // Only consider months strictly before the invoice month/year
       if (y < invoice.year || (y === invoice.year && m < invoice.month)) {
         const status = data.status || "unpaid";
@@ -1475,6 +1848,19 @@ const InvoicePage = () => {
       .sort((a, b) => a.year - b.year || a.month - b.month);
     const totalDebt = debtDetails.reduce((sum, d) => sum + (d.amount || 0), 0);
 
+    // Build debt summary for display in receipt (simplified version)
+    const debtSummary = debtDetails.length > 0 
+      ? `Nợ lũy kế ${debtDetails.length} tháng: ${totalDebt.toLocaleString("vi-VN")} đ`
+      : "Không có nợ cũ";
+    
+    const debtDetail1 = debtDetails.length > 0 
+      ? `Nợ các tháng: ${debtDetails.map(d => `T${d.month + 1}/${d.year}`).join(", ")}`
+      : "";
+    
+    const debtDetail2 = debtDetails.length > 0
+      ? `Tổng nợ lũy kế: ${totalDebt.toLocaleString("vi-VN")} đ`
+      : "";
+
     // Build debt details table (per unpaid month) with totals
     const debtDetailsHtml =
       debtDetails.length > 0
@@ -1490,22 +1876,22 @@ const InvoicePage = () => {
           </thead>
           <tbody>
             ${debtDetails
-              .map(
-                (d, idx) => `
+          .map(
+            (d, idx) => `
               <tr style="background:${idx % 2 === 0 ? '#f0f5ff' : '#ffffff'};">
                 <td style="padding:10px 12px; border:1px solid #e8e8e8;">Tháng ${d.month + 1}/${d.year}</td>
                 <td style="padding:10px 12px; text-align:right; border:1px solid #e8e8e8; color:#c40000; font-weight:600;">${d.amount.toLocaleString("vi-VN")} đ</td>
               </tr>`
-              )
-              .join("")}
+          )
+          .join("")}
             <tr style="font-weight:700; background:#fff1f0; border-top:2px solid #c40000;">
-              <td style="padding:12px; border:1px solid #e8e8e8; color:#c40000;">Tổng nợ</td>
+              <td style="padding:12px; border:1px solid #e8e8e8; color:#c40000;">Tổng nợ lũy kế</td>
               <td style="padding:12px; text-align:right; border:1px solid #e8e8e8; color:#c40000; font-size:16px;">${totalDebt.toLocaleString("vi-VN")} đ</td>
             </tr>
           </tbody>
         </table>
       </div>`
-        : `<p style="margin:14px 0;"><strong style="color:#1a3353; font-size:15px;">Chi tiết nợ:</strong> <span style="color:#666;">Không có nợ</span></p>`;
+        : `<p style="margin:14px 0;"><strong style="color:#1a3353; font-size:15px;">Chi tiết nợ:</strong> <span style="color:#666;">Không có nợ cũ</span></p>`;
     // Build current month breakdown HTML (classes and totals)
     const currentMonthRows = classRows.map((r) => ({
       subject: r.subject,
@@ -1521,6 +1907,10 @@ const InvoicePage = () => {
       0;
 
     const discountAmount = invoice.discount || 0;
+    const discountPercent = currentMonthTotal > 0 ? (discountAmount / currentMonthTotal) * 100 : 0;
+    const discountLabel = discountAmount > 0
+      ? `- ${discountAmount.toLocaleString("vi-VN")} đ${discountPercent > 0 ? ` (${discountPercent.toFixed(1)}%)` : ""}`
+      : "";
     const netCurrentMonth = Math.max(0, currentMonthTotal - discountAmount);
 
     const currentMonthHtml =
@@ -1540,8 +1930,8 @@ const InvoicePage = () => {
           </thead>
           <tbody>
             ${currentMonthRows
-              .map(
-                (r, idx) => `
+          .map(
+            (r, idx) => `
               <tr style="background:${idx % 2 === 0 ? '#f0f5ff' : '#ffffff'};">
                 <td style="padding:10px 12px; border:1px solid #e8e8e8;">${subjectMap[r.subject] || r.subject}</td>
                 <td style="padding:10px 12px; border:1px solid #e8e8e8;">${r.className}</td>
@@ -1549,20 +1939,19 @@ const InvoicePage = () => {
                 <td style="padding:10px 12px; text-align:right; border:1px solid #e8e8e8;">${r.pricePerSession.toLocaleString("vi-VN")} đ</td>
                 <td style="padding:10px 12px; text-align:right; border:1px solid #e8e8e8; font-weight:600; color:#1890ff;">${r.totalPrice.toLocaleString("vi-VN")} đ</td>
               </tr>`
-              )
-              .join("")}
+          )
+          .join("")}
           </tbody>
         </table>
-        ${
-          discountAmount > 0
-            ? `
+        ${discountAmount > 0
+          ? `
         <div style="margin-top:8px; padding:10px 12px; background:#e6f7ff; border-radius:4px; border:1px solid #91d5ff;">
           <div style="display:flex; justify-content:space-between; align-items:center;">
             <span style="color:#003a8c; font-size:14px; font-weight:600;">Miễn giảm học phí</span>
-            <span style="color:#003a8c; font-size:15px; font-weight:700;">- ${discountAmount.toLocaleString("vi-VN")} đ</span>
+            <span style="color:#003a8c; font-size:15px; font-weight:700;">${discountLabel}</span>
           </div>
         </div>`
-            : ""
+          : ""
         }
       </div>`
         : `<p style="margin:14px 0;"><strong style="color:#1a3353; font-size:15px;">Chi tiết tháng ${invoice.month + 1}:</strong> <span style="color:#666;">Không có buổi học</span></p>`;
@@ -1595,140 +1984,467 @@ const InvoicePage = () => {
     const accountNo = "4319888";
     const accountName = "NGUYEN THI HOA";
 
-    // Format debt details for display (first 2 lines)
-    const debtDetail1 = debtDetails.length > 0 
-      ? `Tháng ${debtDetails[0].month + 1}/${debtDetails[0].year}: ${debtDetails[0].amount.toLocaleString("vi-VN")} đ`
-      : "";
-    const debtDetail2 = debtDetails.length > 1
-      ? `Tháng ${debtDetails[1].month + 1}/${debtDetails[1].year}: ${debtDetails[1].amount.toLocaleString("vi-VN")} đ`
-      : "";
+    const qrUrl = generateVietQR(
+      combinedTotalDue.toString(),
+      invoice.studentName,
+      (invoice.month + 1).toString()
+    );
+
+    const decorIconsHtml = generateDecorIcons();
+    const logoUrl =
+      "https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png";
+    const watermarkUrl =
+      "https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F5efd9944.%E1%BA%A2nh.120320.png";
 
     return `
-      <div style="font-family: 'Roboto', sans-serif; width: 100%; max-width: 800px; background: #fff; box-shadow: 0 5px 15px rgba(0,0,0,0.1); overflow: hidden; position: relative; border-radius: 8px; margin: 0 auto;">
-        <!-- Watermark -->
-        <div style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); font-size: 40px; font-weight: bold; color: rgba(0,0,0,0.03); z-index: 0; pointer-events: none; white-space: nowrap;">TRUNG TÂM HỌC TẬP</div>
-
-        <!-- Background Logo, full sheet with 10% opacity on top layer -->
-        <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 10; display: flex; align-items: center; justify-content: center; pointer-events: none;">
-          <img
-            src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F5efd9944.%E1%BA%A2nh.120320.png"
-            alt="Background Logo"
-            style="width: 90%; height: 90%; max-width: 90%; max-height: 90%; object-fit: contain; opacity: 0.1; filter: grayscale(15%) brightness(1.05);"
-          />
-        </div>
-
-        <div style="position: relative; z-index: 1;">
-          <!-- Header -->
-          <div style="background-color: #103458; color: #fccf6e; text-align: center; padding: 25px 10px;">
-            <div style="display: flex; align-items: center; justify-content: center; gap: 15px; margin-bottom: 15px;">
-              <img src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png" alt="Logo Trí Tuệ 8+" style="height: 50px; width: auto; object-fit: contain;" />
-              <div style="font-size: 20px; font-weight: 500; color: #fccf6e;">Trung tâm trí tuệ 8+</div>
-            </div>
-            <h1 style="text-transform: uppercase; font-size: 28px; font-weight: 700; letter-spacing: 1px; margin: 0;">PHIẾU THU HỌC PHÍ THÁNG ${invoice.month + 1}</h1>
-          </div>
-
-          <!-- Info Section -->
-          <div style="display: flex; justify-content: space-between; padding: 30px 40px; color: #103458; font-weight: 700;">
-            <div style="width: 48%;">
-              <h3 style="text-transform: uppercase; font-size: 18px; margin-bottom: 15px; font-weight: 700;">THÔNG TIN HỌC SINH</h3>
-              <div style="margin-bottom: 8px; font-size: 15px; color: #333;"><span style="font-weight: 800;">Họ và tên:</span> ${invoice.studentName}</div>
-              <div style="margin-bottom: 8px; font-size: 15px; color: #333;"><span style="font-weight: 800;">Khối lớp:</span> ${grade || "Chưa xác định"}</div>
-            </div>
-            <div style="width: 48%;">
-              <h3 style="text-transform: uppercase; font-size: 18px; margin-bottom: 15px; font-weight: 700;">THÔNG TIN THANH TOÁN</h3>
-              <div style="margin-bottom: 8px; font-size: 15px; color: #333;"><span style="font-weight: 800;">Tên người nhận:</span> ${accountName}</div>
-              <div style="margin-bottom: 8px; font-size: 15px; color: #333;"><span style="font-weight: 800;">Số tài khoản:</span> ${accountNo}</div>
-            </div>
-              </div>
+      <!DOCTYPE html>
+      <html lang="vi">
+      <head>
+          <meta charset="UTF-8">
+          <meta name="viewport" content="width=device-width, initial-scale=1.0">
+          <title>Phiếu Thu A5</title>
+          <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+          <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+          <style>
+              /* --- CẤU HÌNH MÀU SẮC --- */
+              :root {
+                  --primary-navy: #003366;
+                  --accent-yellow: #FFD700;
+                  --accent-red: #D32F2F;
+                  --accent-orange: #d35400;
+                  --border-color: #ced6e0;
+                  --page-width: 148mm;
+                  --page-height: 210mm;
+                  
+                  /* Palette Xám Nhạt cho Viền */
+                  --gray-1: #bdc3c7; --gray-2: #cfd8dc; --gray-3: #b0bec5; --gray-4: #90a4ae;
+              }
+      
+              .invoice-body {
+                  background-color: #333; font-family: 'Montserrat', sans-serif;
+                  margin: 0; padding: 20px; display: flex; flex-direction: column; align-items: center; gap: 30px;
+                  -webkit-print-color-adjust: exact;
+              }
+      
+              /* --- TRANG GIẤY A5 --- */
+              .page {
+                  width: var(--page-width); min-height: var(--page-height);
+                  background: white; position: relative; overflow: hidden; box-sizing: border-box;
+                  display: flex; flex-direction: column; 
+                  padding: 30px; /* Lề rộng cho viền */
+                  box-shadow: 0 0 25px rgba(0,0,0,0.5);
+                  margin: 0 auto;
+              }
+      
+              /* --- VIỀN DECOR --- */
+              .school-border-layer {
+                  position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+                  pointer-events: none; z-index: 1; overflow: hidden;
+              }
+              .decor-icon {
+                  position: absolute; display: flex; align-items: center; justify-content: center;
+                  font-size: 22px; opacity: 0.4; filter: drop-shadow(1px 1px 0px white);
+              }
+              .c-gray-1 { color: var(--gray-1); } .c-gray-2 { color: var(--gray-2); }
+              .c-gray-3 { color: var(--gray-3); } .c-gray-4 { color: var(--gray-4); }
+              /* --- WATERMARK --- */
+              .watermark-layer {
+                  position: absolute; top: 55%; left: 50%; transform: translate(-50%, -50%);
+                  width: 80%; opacity: 0.12; z-index: 0; pointer-events: none;
+                  display: flex; justify-content: center; align-items: center;
+              }
+              .watermark-img { width: 100%; height: auto; object-fit: contain; }
+      
+              /* --- HEADER --- */
+              .header {
+                  background-color: var(--primary-navy); color: white; padding: 12px 15px;
+                  position: relative; z-index: 2; border-bottom: 4px solid var(--accent-yellow);
+                  display: flex; align-items: center; justify-content: space-between;
+                  border-radius: 8px 8px 0 0; margin-bottom: 10px;
+                  box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+              }
+              .header-left { display: flex; flex-direction: column; gap: 2px; }
+              .brand-name { font-size: 13px; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px; }
+              .doc-title { font-size: 18px; font-weight: 700; margin-top: 4px; color: var(--accent-yellow); }
+              .sub-title { font-size: 10px; opacity: 0.9; font-style: italic; }
+      
+              .logo-container {
+                  width: 65px; height: 65px; background: white; border-radius: 50%;
+                  border: 3px solid var(--accent-yellow);
+                  display: flex; align-items: center; justify-content: center;
+                  overflow: hidden; cursor: pointer; position: relative; z-index: 10;
+                  box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+              }
+              .logo-img { width: 100%; height: 100%; object-fit: contain; }
+      
+              /* --- CONTENT --- */
+              .content { padding: 0; position: relative; z-index: 2; flex: 1; display: flex; flex-direction: column;}
+      
+              .info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 15px; margin-bottom: 15px; }
+              .info-box {
+                  background: #fff; border: 1px solid #ced6e0; border-radius: 8px;
+                  padding: 8px 12px; position: relative; box-shadow: 0 2px 5px rgba(0,0,0,0.03);
+              }
+              .info-box::before {
+                  content: ''; position: absolute; top: 10px; bottom: 10px; left: 0;
+                  width: 3px; background: var(--primary-navy); border-radius: 0 4px 4px 0;
+              }
+              .box-title {
+                  font-size: 11px; font-weight: 700; color: var(--primary-navy);
+                  text-transform: uppercase; margin-bottom: 6px; display: flex; align-items: center; gap: 5px;
+              }
+              .info-row {
+                  display: flex; justify-content: space-between; margin-bottom: 4px;
+                  font-size: 10px; border-bottom: 1px dashed #eee; padding-bottom: 2px;
+              }
+              .info-label { color: #666; font-weight: 500; }
+              .info-val { font-weight: 600; color: #333; text-align: right; }
+      
+              /* --- BẢNG --- */
+              .table-container { margin-bottom: ${includeQR ? '10px' : '5px'}; border-radius: 8px; overflow: hidden; border: 1px solid var(--primary-navy); }
+              table { width: 100%; border-collapse: collapse; font-size: 10px; }
+              thead { background-color: var(--primary-navy); color: white; }
+              th { padding: 8px 5px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 9px; border-right: 1px solid rgba(255,255,255,0.2); }
+              th:last-child { border-right: none; }
+              td { padding: 6px 5px; border-bottom: 1px solid var(--border-color); border-right: 1px solid var(--border-color); color: #444; vertical-align: middle; }
+              td:last-child { border-right: none; }
+              tr:last-child td { border-bottom: none; }
+              tr:nth-child(even) { background-color: #f9f9f9; }
+              .row-icon { color: var(--primary-navy); margin-right: 3px; opacity: 0.7; font-size: 10px; }
+              .text-right { text-align: right; } .text-center { text-align: center; }
+              .text-red { color: var(--accent-red); font-weight: 700; }
+              .text-orange { color: #d35400; font-weight: 700; }
+              .total-row-highlight { font-size: 12px; font-weight: 800; color: var(--accent-red); text-transform: uppercase; }
+      
+              /* --- FOOTER --- */
+              .bottom-layout { display: flex; gap: 15px; margin-top: auto; padding-bottom: 0px; align-items: flex-start; }
               
-          <!-- Table -->
-          <div style="padding: 0 40px;">
-            <table style="width: 100%; border-collapse: collapse; border-radius: 10px 10px 0 0; overflow: hidden; border: 2px solid #999;">
-              <thead style="background-color: #103458; color: white;">
-                <tr>
-                  <th style="padding: 15px; text-align: center; font-weight: 600; border-right: 2px solid rgba(255,255,255,0.3);">Môn học</th>
-                  <th style="padding: 15px; text-align: center; font-weight: 600; border-right: 2px solid rgba(255,255,255,0.3);">Lớp</th>
-                  <th style="padding: 15px; text-align: center; font-weight: 600; border-right: 2px solid rgba(255,255,255,0.3);">Số buổi</th>
-                  <th style="padding: 15px; text-align: center; font-weight: 600; border-right: 2px solid rgba(255,255,255,0.3);">Giá/buổi</th>
-                  <th style="padding: 15px; text-align: center; font-weight: 600;">Thành tiền</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${subjectsForTable.map((item, index) => {
-                  return `
-                    <tr style="background-color: ${index % 2 === 0 ? '#fff' : '#eef6fb'};">
-                      <td style="padding: 12px 15px 12px 20px; text-align: left; color: #333; border-bottom: 2px solid #999; border-right: 2px solid #999;">
-                        <div style="display: flex; align-items: center; gap: 10px; font-weight: 600;">
-                          <i class="fa-solid ${getSubjectIcon(item.subject)}" style="color: #103458; width: 20px;"></i>
-                          ${subjectMap[item.subject] || item.subject}
-              </div>
-                      </td>
-                      <td style="padding: 12px 15px; text-align: center; color: #333; border-bottom: 2px solid #999; border-right: 2px solid #999; font-weight: 600;">${item.className}</td>
-                      <td style="padding: 12px 15px; text-align: center; color: #333; border-bottom: 2px solid #999; border-right: 2px solid #999; font-weight: 600;">${item.sessions}</td>
-                      <td style="padding: 12px 15px; text-align: center; color: #333; border-bottom: 2px solid #999; border-right: 2px solid #999; font-weight: 600;">${item.pricePerSession.toLocaleString("vi-VN")}</td>
-                      <td style="padding: 12px 15px; text-align: center; color: #333; border-bottom: 2px solid #999; font-weight: 600;">${item.total.toLocaleString("vi-VN")}</td>
-                    </tr>
-                  `;
-                }).join("")}
-                ${discountAmount > 0 ? `
-                <tr style="background-color: #fff0f6;">
-                  <td colspan="4" style="padding: 12px 15px 12px 20px; text-align: left; color: #333; border-bottom: 2px solid #999; border-right: 2px solid #999; font-weight: 600;">Miễn giảm</td>
-                  <td style="padding: 12px 15px; text-align: center; color: #c40000; border-bottom: 2px solid #999; font-weight: 700;">- ${discountAmount.toLocaleString("vi-VN")} đ</td>
-                </tr>
-                ` : ""}
-                <tr style="background-color: #fff1f0; border-top: 2px solid #c40000;">
-                  <td colspan="4" style="padding: 12px 15px 12px 20px; text-align: left; color: #c40000; border-bottom: 2px solid #999; border-right: 2px solid #999; font-weight: 700; font-size: 16px;">Tổng học phí tháng ${invoice.month + 1}</td>
-                  <td style="padding: 12px 15px; text-align: center; color: #c40000; border-bottom: 2px solid #999; font-weight: 700; font-size: 16px;">${currentMonthTotal.toLocaleString("vi-VN")} đ</td>
-                </tr>
-              </tbody>
-            </table>
-            </div>
-            
-          <!-- Footer -->
-          <div style="padding: 20px 40px 40px 40px;">
-            ${totalDebt > 0 ? `
-            <div style="display: flex; gap: 30px; margin-bottom: 30px;">
-              <div style="flex: 1.2; display: flex; flex-direction: column; justify-content: space-between;">
-                <div>
-                  <div style="background-color: #f25c78; color: white; display: inline-block; padding: 8px 15px; border-radius: 6px; font-weight: bold; margin-bottom: 10px; width: fit-content;">Chi tiết nợ</div>
-                  <div style="width: 100%; background-color: #eef6fb; border: none; height: 40px; border-radius: 8px; margin-bottom: 10px; padding: 8px 12px; font-size: 14px; color: #333; display: flex; align-items: center;">${debtDetail1 || ""}</div>
-                  <div style="width: 100%; background-color: #eef6fb; border: none; height: 40px; border-radius: 8px; margin-bottom: 10px; padding: 8px 12px; font-size: 14px; color: #333; display: flex; align-items: center;">${debtDetail2 || ""}</div>
-              </div>
-              </div>
-            </div>
-            ` : ""}
+              .debt-container { flex: 1; background: white; border: 1px solid var(--primary-navy); border-radius: 8px; overflow: hidden; }
+              .debt-header { background: var(--primary-navy); color: white; padding: 5px 10px; font-size: 10px; font-weight: 700; text-transform: uppercase; display: flex; align-items: center; gap: 5px; }
+              .debt-table { width: 100%; font-size: 9px; border-collapse: collapse; }
+              .debt-table th { background: #f0f4f8; color: var(--primary-navy); padding: 5px; border-bottom: 1px solid #ddd; border-right: 1px solid #eee; text-align: center; }
+              .debt-table td { padding: 5px; border-bottom: 1px solid #eee; border-right: 1px solid #eee; text-align: center; color: #333; }
+              
+              .payment-column { width: 150px; display: flex; flex-direction: column; gap: 10px; }
+              .grand-total-box { background: var(--primary-navy); color: white; padding: 10px; border-radius: 8px; text-align: center; box-shadow: 0 4px 8px rgba(0,0,0,0.15); }
+              .grand-total-label { font-size: 9px; text-transform: uppercase; opacity: 0.9; margin-bottom: 2px; line-height: 1.2; }
+              .grand-total-val { font-size: 18px; font-weight: 800; color: var(--accent-yellow); line-height: 1.1; }
+      
+              .qr-block-stack { background: white; border: 1px solid #ddd; border-radius: 8px; padding: 5px; text-align: center; }
+              .qr-placeholder-stack { width: 100%; aspect-ratio: 1/1; background: white; display: flex; align-items: center; justify-content: center; cursor: pointer; border-radius: 4px; overflow: hidden; margin-bottom: 5px; }
+              .qr-img { width: 100%; height: 100%; object-fit: cover; }
+              .qr-note { font-size: 9px; color: #555; line-height: 1.3; font-weight: 600; word-break: break-word; }
+              [contenteditable]:hover { background: rgba(255, 215, 0, 0.1); outline: none; border-radius: 2px;}
+              [contenteditable]:focus { background: #fff; outline: 1px solid var(--primary-navy); }
+      
+              @media print {
+                  .invoice-body { background: white; padding: 0; gap: 0; display: block; }
+                  .toolbar { display: none !important; }
+                  .page { box-shadow: none; width: 100%; height: 100%; margin: 0; border: none; page-break-after: always; }
+                  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+              }
+          </style>
+          <script>
+              // Auto-save functionality for contenteditable fields
+              let saveTimeout;
+              let invoiceData = ${JSON.stringify({
+                id: invoice.id,
+                studentId: invoice.studentId,
+                studentName: invoice.studentName,
+                studentCode: invoice.studentCode,
+                month: invoice.month,
+                year: invoice.year,
+                totalSessions: invoice.totalSessions,
+                totalAmount: invoice.totalAmount,
+                discount: invoice.discount,
+                finalAmount: invoice.finalAmount
+              })};
 
-            <!-- QR Code + Tổng tiền cùng hàng, căn dưới -->
-            <div style="display: flex; gap: 20px; align-items: flex-end; margin-bottom: 20px;">
-              <div style="flex: 1; background-color: white; border: 2px solid #1890ff; padding: 15px; border-radius: 8px; display: flex; align-items: center; justify-content: center; min-height: 70px;">
-                <span style="font-size: 18px; font-weight: bold; color: #333; margin-right: 5px;">
-                  TỔNG TIỀN:
-                </span>
-                <span style="color: #c40000; font-weight: bold; font-size: 20px;">${combinedTotalDue.toLocaleString("vi-VN")} đ</span>
-              </div>
+              function saveInvoiceData() {
+                console.log('Saving invoice data...', invoiceData);
+                // Show saving indicator
+                showSaveIndicator('Đang lưu...');
+                
+                // Trigger parent window to save data
+                if (window.parent && window.parent !== window) {
+                  window.parent.postMessage({
+                    type: 'SAVE_INVOICE_DATA',
+                    data: invoiceData
+                  }, '*');
+                }
+              }
 
-              <div style="flex: 0 0 200px; border: 1px solid #ddd; border-radius: 15px; padding: 10px; text-align: center; background: white;">
-                <div style="display: flex; justify-content: center; gap: 10px; margin-bottom: 5px; color: red; font-weight: bold; font-size: 12px;">
-                  <span>VIETQR</span> <span>VIETQR</span>
-                </div>
-                <img src="${generateVietQR(combinedTotalDue.toString(), invoice.studentName, (invoice.month + 1).toString())}" alt="QR Code" style="width: 100%; height: auto; display: block;" crossOrigin="anonymous" />
-                <div style="font-size: 12px; margin-top: 5px; font-weight: bold;">Quét mã để thanh toán</div>
-              </div>
-            </div>
+              function showSaveIndicator(text) {
+                let indicator = document.getElementById('save-indicator');
+                if (!indicator) {
+                  indicator = document.createElement('div');
+                  indicator.id = 'save-indicator';
+                  indicator.style.cssText = \`
+                    position: fixed;
+                    top: 10px;
+                    right: 10px;
+                    background: #52c41a;
+                    color: white;
+                    padding: 8px 16px;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    z-index: 9999;
+                    transition: all 0.3s;
+                  \`;
+                  document.body.appendChild(indicator);
+                }
+                indicator.textContent = text;
+                indicator.style.display = 'block';
+                
+                setTimeout(() => {
+                  if (text === 'Đang lưu...') {
+                    indicator.textContent = '✓ Đã lưu';
+                    indicator.style.background = '#52c41a';
+                  }
+                  setTimeout(() => {
+                    indicator.style.opacity = '0';
+                    setTimeout(() => {
+                      indicator.style.display = 'none';
+                      indicator.style.opacity = '1';
+                    }, 300);
+                  }, 1000);
+                }, 500);
+              }
 
-            <!-- Ghi chú -->
-            <div style="font-size: 11px; color: #666; text-align: center; line-height: 1.4; max-width: 100%;">
-              Ghi chú: Vui lòng ghi rõ nội dung chuyển khoản: ${invoice.studentName} - T${invoice.month + 1}
-            </div>
+              function debounceSubmit() {
+                clearTimeout(saveTimeout);
+                saveTimeout = setTimeout(() => {
+                  saveInvoiceData();
+                }, 1000); // Save after 1 second of no changes
+              }
+
+              document.addEventListener('DOMContentLoaded', function() {
+                // Add event listeners to all contenteditable fields
+                const editableFields = document.querySelectorAll('[contenteditable="true"]');
+                
+                editableFields.forEach(field => {
+                  field.addEventListener('input', function(e) {
+                    const target = e.target;
+                    const text = target.textContent.trim();
+                    
+                    // Visual feedback for editing
+                    target.style.background = 'rgba(255, 215, 0, 0.2)';
+                    target.style.transition = 'background 0.3s';
+                    
+                    // Update invoice data based on field type
+                    if (target.closest('.info-val') && target.closest('.info-row')) {
+                      const label = target.closest('.info-row').querySelector('.info-label').textContent;
+                      if (label.includes('Họ tên')) {
+                        invoiceData.studentName = text;
+                      } else if (label.includes('Mã HS')) {
+                        invoiceData.studentCode = text;
+                      }
+                    }
+                    
+                    debounceSubmit();
+                  });
+
+                  // Show save indicator and tooltip
+                  field.addEventListener('focus', function(e) {
+                    e.target.title = 'Chỉnh sửa trực tiếp - tự động lưu sau 1 giây';
+                    e.target.style.background = 'rgba(24, 144, 255, 0.1)';
+                  });
+
+                  field.addEventListener('blur', function(e) {
+                    e.target.style.background = '';
+                  });
+                });
+
+                // Add edit hint
+                const hint = document.createElement('div');
+                hint.innerHTML = '<i class="fas fa-edit"></i> Có thể chỉnh sửa trực tiếp - tự động lưu';
+                hint.style.cssText = \`
+                  position: fixed;
+                  bottom: 10px;
+                  left: 10px;
+                  background: rgba(0,0,0,0.7);
+                  color: white;
+                  padding: 6px 12px;
+                  border-radius: 20px;
+                  font-size: 11px;
+                  z-index: 9999;
+                  opacity: 0.8;
+                \`;
+                document.body.appendChild(hint);
+              });
+          </script>
+          </style>
+      </head>
+      <body>
+          <!-- TRANG A5 -->
+          <div class="invoice-body">
+              <div class="page" id="page-final">
+                  <!-- Viền Decor (Gray) -->
+                  <div class="school-border-layer" id="border-layer">
+                      ${decorIconsHtml}
+                  </div>
+      
+                  <!-- Watermark (Có Sẵn Logo) -->
+                  <div class="watermark-layer">
+                      <img class="watermark-img" src="${watermarkUrl}">
+                  </div>
+      
+                  <!-- Header -->
+                  <div class="header">
+                      <div class="header-left">
+                          <div class="brand-name">TRUNG TÂM PHÁT TRIỂN TƯ DUY - TRÍ TUỆ 8+</div>
+                          <div class="doc-title">PHIẾU THU HỌC PHÍ</div>
+                          <div class="sub-title" contenteditable="true">Tháng ${invoice.month + 1
+      } / ${invoice.year}</div>
+                      </div>
+                      <!-- Logo Container (Có Sẵn Logo) -->
+                      <div class="logo-container">
+                          <img class="logo-img" src="${logoUrl}">
+                      </div>
+                  </div>
+      
+                  <div class="content">
+                      <div class="info-grid">
+                          <div class="info-box">
+                              <div class="box-title"><i class="fas fa-user-graduate"></i> Học sinh</div>
+                              <div class="info-row"><span class="info-label">Họ tên:</span><span class="info-val" contenteditable="true">${invoice.studentName
+      }</span></div>
+                              <div class="info-row"><span class="info-label">Lớp:</span><span class="info-val" contenteditable="true">${grade}</span></div>
+                              <div class="info-row"><span class="info-label">Mã HS:</span><span class="info-val" contenteditable="true">${invoice.studentCode || "..."
+      }</span></div>
+                          </div>
+                          <div class="info-box">
+                              <div class="box-title"><i class="fas fa-credit-card"></i> Thanh toán</div>
+                              <div class="info-row"><span class="info-label">Người nhận:</span><span class="info-val">${accountName}</span></div>
+                              <div class="info-row"><span class="info-label">NH:</span><span class="info-val" contenteditable="true">${bankId}</span></div>
+                              <div class="info-row"><span class="info-label">STK:</span><span class="info-val" contenteditable="true">${accountNo}</span></div>
+                          </div>
+                      </div>
+      
+                      <div class="table-container">
+                          <table>
+                              <thead>
+                                  <tr>
+                                      <th style="width: 35%;">Môn học</th>
+                                      <th class="text-center" style="width: 15%;">Lớp</th>
+                                      <th class="text-center" style="width: 12%;">Buổi</th>
+                                      <th class="text-right" style="width: 18%;">Đơn giá</th>
+                                      <th class="text-right" style="width: 20%;">Thành tiền</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  ${subjectsForTable
+        .map(
+          (item) => `
+                                  <tr>
+                                      <td><i class="fas ${getSubjectIcon(
+            item.subject
+          )} row-icon"></i> <span contenteditable="true">${subjectMap[item.subject] || item.subject
+            }</span></td>
+                                      <td class="text-center" contenteditable="true">${item.className
+            }</td>
+                                      <td class="text-center" contenteditable="true">${item.sessions
+            }</td>
+                                      <td class="text-right" contenteditable="true">${item.pricePerSession.toLocaleString(
+              "vi-VN"
+            )}</td>
+                                      <td class="text-right" contenteditable="true">${item.total.toLocaleString(
+              "vi-VN"
+            )}</td>
+                                  </tr>
+                                  `
+        )
+        .join("")}
+                                  
+                                  ${discountAmount > 0
+        ? `
+                                  <tr style="background-color: #fff0f0;">
+                                      <td colspan="4" class="text-right text-red"><i>Miễn giảm:</i></td>
+                                      <td class="text-right text-red" contenteditable="true">${discountLabel}</td>
+                                  </tr>
+                                  `
+        : ""
+      }
+                                  <tr style="background-color: #e8f0fe;">
+                                      <td colspan="4" class="text-right total-row-highlight">TỔNG THÁNG NÀY:</td>
+                                      <td class="text-right total-row-highlight" contenteditable="true">${currentMonthTotal.toLocaleString(
+        "vi-VN"
+      )} đ</td>
+                                  </tr>
+                              </tbody>
+                          </table>
+                      </div>
+      
+                      <div class="bottom-layout">
+                          <div class="debt-container">
+                              <div class="debt-header"><i class="fas fa-clipboard-list"></i> NỢ LŨY KẾ CÁC THÁNG TRƯỚC</div>
+                              <table class="debt-table">
+                                  <thead><tr><th style="width:40%">Tháng</th><th>Số tiền</th></tr></thead>
+                                  <tbody>
+                                      ${debtDetails.length > 0
+        ? debtDetails
+          .map(
+            (d) => `
+                                          <tr>
+                                              <td contenteditable="true">T${d.month + 1
+              }/${d.year}</td>
+                                              <td contenteditable="true">${d.amount.toLocaleString(
+                "vi-VN"
+              )} đ</td>
+                                          </tr>
+                                      `
+          )
+          .join("")
+        : `<tr><td colspan="2" class="text-center" style="color: #999;">Không có nợ</td></tr>`
+      }
+                                      ${debtDetails.length > 0
+        ? `
+                                      <tr style="font-weight: bold; background: #fff8e1;">
+                                          <td class="text-center">TỔNG NỢ LŨY KẾ</td>
+                                          <td>${totalDebt.toLocaleString(
+          "vi-VN"
+        )} đ</td>
+                                      </tr>
+                                      `
+        : ""
+      }
+                                  </tbody>
+                              </table>
+                          </div>
+                              <div class="payment-column">
+                              <div class="grand-total-box">
+                                  <div class="grand-total-label">TỔNG PHẢI THU (NỢ CŨ + THÁNG NÀY)</div>
+                                  <div class="grand-total-val" contenteditable="true">${combinedTotalDue.toLocaleString(
+        "vi-VN"
+      )} đ</div>
+                              </div>
+                              ${includeQR ? `
+                              <div class="qr-block-stack">
+                                  <div class="qr-placeholder-stack">
+                                      <img class="qr-img" src="${qrUrl}" style="display:block;">
+                                  </div>
+                                  <div class="qr-note" contenteditable="true">${invoice.studentName
+      } - ${grade} - T${invoice.month + 1}${totalDebt > 0 ? ` (có nợ ${debtDetails.length} tháng)` : ""}</div>
+                              </div>
+                              ` : ''}
+                          </div>
+                      </div>
+                  </div>
+              </div>
           </div>
-        </div>
-      </div>
+      </body>
+      </html>
     `;
   };
 
   const generateTeacherSalaryHTML = (salary: TeacherSalary) => {
     const teacher = teachers.find((t) => t.id === salary.teacherId);
-    const travelAllowancePerSession = Number(teacher?.["Trợ cấp đi lại"]) || 0;
+
+    const parseCurrency = (value: unknown) => {
+      if (value === undefined || value === null) return 0;
+      const num = Number(String(value).replace(/[^0-9.-]+/g, ""));
+      return Number.isFinite(num) ? num : 0;
+    };
 
     // Group sessions by class
     const classSummary: Record<
@@ -1748,18 +2464,10 @@ const InvoicePage = () => {
       const classId = session["Class ID"];
       const className = session["Tên lớp"] || "";
       const classCode = session["Mã lớp"] || "";
-      
+
       // Find class info to get subject and salary per session
       const classInfo = classes.find((c) => c.id === classId);
       const subject = classInfo?.["Môn học"] || "";
-      
-      // Get salary per session from class (Lương GV) or calculate from session
-      const classSalaryPerSession = classInfo?.["Lương GV"] || 0;
-      
-      // Use class-specific salary if available, otherwise use teacher's default
-      const salaryPerSession = classSalaryPerSession > 0 
-        ? classSalaryPerSession 
-        : (Number(teacher?.["Lương theo buổi"]) || 0);
 
       if (!classSummary[classId]) {
         classSummary[classId] = {
@@ -1773,17 +2481,24 @@ const InvoicePage = () => {
         };
       }
 
+      const salaryPerSession =
+        parseCurrency(classInfo?.["Lương GV"]) ||
+        parseCurrency(session["Lương GV"]) ||
+        parseCurrency(teacher?.["Lương theo buổi"]);
+
+      const allowancePerSession = parseCurrency(session["Phụ cấp di chuyển"]);
+
       classSummary[classId].sessionCount++;
       classSummary[classId].totalSalary += salaryPerSession;
-      classSummary[classId].totalAllowance += travelAllowancePerSession;
+      classSummary[classId].totalAllowance += allowancePerSession;
     });
 
-    const classData = Object.values(classSummary).sort((a, b) => 
+    const classData = Object.values(classSummary).sort((a, b) =>
       a.className.localeCompare(b.className)
     );
-    
-    // Use the pre-calculated values from salary object for accuracy
-    const grandTotal = salary.totalSalary + salary.totalAllowance;
+
+    const totalSessions = salary.totalSessions || salary.sessions?.length || 0;
+    const totalAllowanceAll = classData.reduce((sum, item) => sum + item.totalAllowance, 0);
 
     // Build a compact table similar to the provided image
     const subjects = Array.from(
@@ -1795,110 +2510,149 @@ const InvoicePage = () => {
     ).join(", ");
 
     // Layout: left details + right QR/bank block (if available)
-    const hasBank = Boolean(teacher?.["Ngân hàng"] && teacher?.STK);
 
-    const totalSessions = salary.totalSessions || salary.sessions?.length || 0;
+    // totalSessions already calculated above
+
+    const logoUrl = "https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png";
+    const watermarkUrl = logoUrl;
+    const bankName = teacher?.["Ngân hàng"] || "N/A";
+    const bankAcc = teacher?.STK || "N/A";
+    const note = teacher?.["Ghi chú"] || "Thầy/Cô vui lòng kiểm tra thông tin và liên hệ ngay nếu có sai sót.";
+    const subjectDisplay =
+      subjectMap[subjects] ||
+      subjects
+        ?.split(",")
+        .map((s) => subjectMap[s.trim()] || s.trim())
+        .join(", ") ||
+      teacher?.["Môn phụ trách"] ||
+      "N/A";
+
+    const classRows = classData
+      .map(
+        (c, idx) => `
+          <tr class="${idx % 2 === 1 ? "pl-tr-even" : ""}">
+            <td class="pl-td">
+              <div style="font-weight:700;">${c.className}${c.classCode ? ` (${c.classCode})` : ""}</div>
+              ${c.subject ? `<div style="font-size:11px;color:#666;">${subjectMap[c.subject] || c.subject}</div>` : ""}
+            </td>
+            <td class="pl-td pl-text-center">${c.sessionCount}</td>
+            <td class="pl-td pl-text-right">${(c.totalSalary + c.totalAllowance).toLocaleString("vi-VN")}</td>
+          </tr>
+        `
+      )
+      .join("");
 
     return `
-      <div style="font-family: 'Times New Roman', serif; padding: 40px 20px 20px 20px; position: relative;">
-        <div style="position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 0; display: flex; align-items: center; justify-content: center; pointer-events: none;">
-          <img
-            src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png"
-            alt="Background Logo"
-            style="width: auto; height: 520px; max-width: 520px; object-fit: contain; opacity: 0.08; filter: grayscale(50%); user-select: none; pointer-events: none;"
-          />
-        </div>
-        <div style="position: relative; z-index: 1;">
-          <h1 style="color: #c40000; text-align: center; margin: 6px 0 18px; font-size: 26px;">PHIẾU LƯƠNG THÁNG ${salary.month + 1}</h1>
+      <div class="pl-wrapper">
+        <style>
+          .pl-wrapper { --primary-color: #003366; --secondary-color: #f8f9fa; --accent-color: #d32f2f; --success-color: #2e7d32; font-family: 'Montserrat', sans-serif; }
+          .pl-page { width: 148mm; min-height: 210mm; background: white; box-shadow: 0 0 20px rgba(0,0,0,0.1); position: relative; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; margin: 0 auto; }
+          .pl-watermark-container { position: absolute; top: 55%; left: 50%; transform: translate(-50%, -50%); width: 70%; z-index: 0; pointer-events: none; opacity: 0.08; display: flex; justify-content: center; align-items: center; }
+          .pl-watermark-img { width: 100%; height: auto; filter: grayscale(0%); }
+          .pl-header { background-color: var(--primary-color); color: white; padding: 14px 22px; border-bottom: 4px solid rgba(0,0,0,0.2); position: relative; z-index: 1; }
+          .pl-brand-section { margin-bottom: 6px; display: flex; align-items: center; gap: 12px; }
+          .pl-logo-header { height: 55px; width: auto; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
+          .pl-brand-info { display: flex; flex-direction: column; }
+          .pl-brand-name { font-size: 10px; opacity: 0.9; letter-spacing: 0.4px; margin-bottom: 1px; text-transform: uppercase; }
+          .pl-brand-main { font-size: 16px; font-weight: 800; line-height: 1.2; }
+          .pl-title-section { display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; }
+          .pl-main-title { font-size: 15px; font-weight: 700; text-transform: uppercase; }
+          .pl-sub-title { font-size: 11px; opacity: 0.85; font-style: italic; }
+          .pl-content { padding: 14px 22px; flex: 1; position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px; }
+          .pl-info-grid { display: grid; grid-template-columns: 0.2fr 0.8fr; gap: 8px; }
+          .pl-info-card { background: var(--secondary-color); padding: 10px 12px; border-radius: 8px; border-left: 4px solid var(--primary-color); }
+          .pl-card-header { font-size: 11px; font-weight: 700; color: var(--primary-color); margin-bottom: 6px; text-transform: uppercase; }
+          .pl-info-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px; border-bottom: 1px dashed #d1d9e6; padding-bottom: 2px; }
+          .pl-info-row:last-child { border-bottom: none; }
+          .pl-label { color: #555; font-weight: 500; font-size: 10px; }
+          .pl-value { font-weight: 700; color: #222; text-align: right; }
+          .pl-table-container { border-radius: 6px; overflow: hidden; border: 1px solid #e0e0e0; }
+          .pl-table { width: 100%; border-collapse: collapse; font-size: 10px; }
+          .pl-thead { background-color: var(--primary-color); color: white; }
+          .pl-th { padding: 8px 5px; text-align: left; font-weight: 600; text-transform: uppercase; font-size: 9px; }
+          .pl-td { padding: 8px 5px; border-bottom: 1px solid #e0e0e0; color: #444; vertical-align: middle; }
+          .pl-tr-even { background-color: #f8f9fa; }
+          .pl-text-center { text-align: center; }
+          .pl-text-right { text-align: right; }
+          .pl-total-section { background-color: #fff7f7; border: 2px dashed var(--accent-color); border-radius: 8px; padding: 12px; text-align: center; }
+          .pl-total-label { font-size: 11px; color: #555; text-transform: uppercase; }
+          .pl-total-amount { font-size: 20px; font-weight: 800; color: var(--accent-color); }
+          .pl-footer { display: flex; justify-content: space-between; padding-top: 10px; margin-top: auto; }
+          .pl-sign-box { text-align: center; width: 45%; }
+          .pl-sign-title { font-size: 9px; font-weight: 700; margin-bottom: 3px; color: var(--primary-color); text-transform: uppercase; }
+          .pl-sign-date { font-size: 9px; font-style: italic; color: #666; margin-bottom: 40px; }
+          .pl-sign-placeholder { font-size: 9px; color: #aaa; font-style: italic; border-top: 1px solid #ccc; padding-top: 5px; width: 80%; margin: 0 auto; }
+          @media print { * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; } }
+        </style>
 
-          <div style="display:flex; gap:24px; align-items:flex-start;">
-            <div style="flex:1; max-width: 720px;">
-              <p style="color: #c40000; font-weight: 700; font-size: 16px; margin: 10px 0;">Họ và tên: ${salary.teacherName}</p>
-              <p style="margin: 6px 0; font-size: 15px;"><strong>Môn Phụ Trách:</strong> ${
-                subjectMap[subjects] ||
-                subjects
-                  .split(",")
-                  .map((item) => subjectMap[item.trim()] || item.trim())
-                  .join(", ") ||
-                teacher?.["Môn phụ trách"] ||
-                ""
-              }</p>
+        <div class="pl-page" id="salarySlip">
+          <div class="pl-watermark-container">
+            <img src="${watermarkUrl}" alt="Watermark" class="pl-watermark-img" />
+          </div>
 
-              <div style="margin-bottom:12px;">
-                <p style="margin:4px 0;"><strong>Tổng số buổi dạy:</strong> ${totalSessions} buổi</p>
-                <p style="margin:4px 0;"><strong>Trợ cấp đi lại:</strong> ${travelAllowancePerSession.toLocaleString("vi-VN")} VNĐ/buổi</p>
-              </div>
-
-              <table style="width: 100%; border-collapse: collapse; margin: 18px 0;">
-                <thead>
-                  <tr style="background: #fff;">
-                    <th style="border: 1px solid #000; padding: 10px; text-align: left;">Lớp học</th>
-                    <th style="border: 1px solid #000; padding: 10px; text-align: center;">Số buổi</th>
-                    <th style="border: 1px solid #000; padding: 10px; text-align: right;">Tổng lương</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  ${classData
-                    .map(
-                      (classItem) => `
-                    <tr>
-                      <td style="border: 1px solid #000; padding: 10px;">
-                        <strong>${classItem.className}</strong>
-                        ${classItem.classCode ? ` (${classItem.classCode})` : ''}
-                        ${classItem.subject ? `<br/><span style="font-size: 12px; color: #666;">${subjectMap[classItem.subject] || classItem.subject}</span>` : ''}
-                      </td>
-                      <td style="border: 1px solid #000; padding: 10px; text-align: center;">${classItem.sessionCount}</td>
-                      <td style="border: 1px solid #000; padding: 10px; text-align: right;">${(classItem.totalSalary + classItem.totalAllowance).toLocaleString("vi-VN")}</td>
-                    </tr>
-                  `
-                    )
-                    .join("")}
-                  <tr style="background: #e8f5e9; font-weight: bold;">
-                    <td style="border: 1px solid #000; padding: 12px; text-align: left; font-size: 16px;">TỔNG LƯƠNG</td>
-                    <td style="border: 1px solid #000; padding: 12px; text-align: center; font-size: 16px;">${salary.totalSessions || salary.sessions?.length || 0}</td>
-                    <td style="border: 1px solid #000; padding: 12px; text-align: right; font-size: 16px;">${grandTotal.toLocaleString("vi-VN")}</td>
-                  </tr>
-                </tbody>
-              </table>
-
-              <div style="margin-top: 12px; font-size: 14px;">
-                <p style="margin: 6px 0;"><strong>Ghi chú:</strong> ${teacher?.["Ghi chú"] || "Thầy Cô kiểm tra kỹ thông tin và tiền lương. Nếu có sai sót báo lại với Trung Tâm"}</p>
-                <p style="margin: 12px 0 0 0;">Thầy Cô ký xác nhận:</p>
+          <div class="pl-header">
+            <div class="pl-brand-section">
+              <img src="${logoUrl}" alt="Logo" class="pl-logo-header" />
+              <div class="pl-brand-info">
+                <div class="pl-brand-name">TRUNG TÂM TRI TUỆ 8+</div>
+                <div class="pl-brand-main">Phiếu Lương Giáo Viên</div>
               </div>
             </div>
-
-            <div style="width: 260px; text-align: center; border-left: 1px solid #f0f0f0; padding-left: 20px;">
-              ${
-                hasBank
-                  ? `
-                <div style="margin-top: 10px; text-align: center; display: flex; flex-direction: column; align-items: center;">
-                  <p style="margin-bottom: 12px; font-size: 13px; color: #666;">Quét mã để nhận lương</p>
-                  <p style="margin:0 0 12px 0; font-weight:700;">${teacher["Họ và tên"] || salary.teacherName}<br/>${teacher?.STK}</p>
-                  <div style="display:flex; align-items:center; justify-content:center;">
-                    <img src="${generateTeacherVietQR(
-                      grandTotal,
-                      salary.teacherName,
-                      salary.month,
-                      teacher["Ngân hàng"],
-                      teacher.STK,
-                      teacher["Họ và tên"] || salary.teacherName
-                    )}" alt="VietQR" style="width:180px; height:180px; border:1px solid #eee; padding:8px; border-radius:6px; background:#fff;" />
-                  </div>
-                  <p style="margin-top:10px; font-size:13px; color:#666;">Ngân hàng: ${teacher["Ngân hàng"] || "N/A"} - STK: ${teacher?.STK || "N/A"}<br/>Người nhận: ${teacher["Họ và tên"] || salary.teacherName}</p>
-                </div>
-              `
-                  : `
-                <div style="margin-bottom: 20px; text-align: left;">
-                  <p style="margin: 6px 0;"><strong>Thông tin ngân hàng:</strong></p>
-                  <p style="margin: 4px 0;">Ngân hàng: ${teacher?.["Ngân hàng"] || "N/A"}</p>
-                  <p style="margin: 4px 0;">Số tài khoản: ${teacher?.STK || "N/A"}</p>
-                </div>
-              `
-              }
+            <div class="pl-title-section">
+              <div class="pl-main-title">THÁNG ${salary.month + 1}/${salary.year}</div>
+              <div class="pl-sub-title">Ngày xuất: ${new Date().toLocaleDateString("vi-VN")}</div>
             </div>
           </div>
 
-          <p style="text-align: center; color: #999; font-size: 12px; margin-top: 26px;">Ngày xuất: ${new Date().toLocaleDateString("vi-VN")}</p>
+          <div class="pl-content">
+            <div class="pl-info-grid">
+              <div class="pl-info-card">
+                <div class="pl-card-header">Thông tin giáo viên</div>
+                <div class="pl-info-row"><span class="pl-label">Họ và tên</span><span class="pl-value">${salary.teacherName}</span></div>
+                <div class="pl-info-row"><span class="pl-label">Môn phụ trách</span><span class="pl-value">${subjectDisplay}</span></div>
+                <div class="pl-info-row"><span class="pl-label">Tổng số buổi</span><span class="pl-value">${totalSessions} buổi</span></div>
+              </div>
+              <div class="pl-info-card">
+                <div class="pl-card-header">Ngân hàng</div>
+                <div class="pl-info-row"><span class="pl-label">Ngân hàng</span><span class="pl-value">${bankName}</span></div>
+                <div class="pl-info-row"><span class="pl-label">Số tài khoản</span><span class="pl-value">${bankAcc}</span></div>
+                <div class="pl-info-row"><span class="pl-label">Tổng trợ cấp</span><span class="pl-value">${totalAllowanceAll.toLocaleString("vi-VN")} đ</span></div>
+              </div>
+            </div>
+
+            <div class="pl-table-container">
+              <table class="pl-table">
+                <thead class="pl-thead">
+                  <tr>
+                    <th class="pl-th">Lớp học</th>
+                    <th class="pl-th pl-text-center">Số buổi</th>
+                    <th class="pl-th pl-text-right">Tổng lương</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${classRows}
+                </tbody>
+              </table>
+            </div>
+
+            <div class="pl-info-row" style="margin-top:4px;">
+              <span class="pl-label">Ghi chú</span>
+              <span class="pl-value" style="text-align:left; flex:1; margin-left:8px;">${note}</span>
+            </div>
+
+            <div class="pl-footer">
+              <div class="pl-sign-box">
+                <div class="pl-sign-title">Trung tâm xác nhận</div>
+                <div class="pl-sign-date">Ngày ....... / ....... / .......</div>
+                <div class="pl-sign-placeholder">(Ký và ghi rõ họ tên)</div>
+              </div>
+              <div class="pl-sign-box">
+                <div class="pl-sign-title">Giáo viên</div>
+                <div class="pl-sign-date">Ngày ....... / ....... / .......</div>
+                <div class="pl-sign-placeholder">(Ký và ghi rõ họ tên)</div>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     `;
@@ -1925,7 +2679,29 @@ const InvoicePage = () => {
     }
   };
 
-  const printInvoice = (content: string) => {
+  const printInvoice = (invoice: StudentInvoice, includeQR: boolean = true) => {
+      console.log('🖨️ Printing invoice with QR:', includeQR);
+    // Get the latest data from state instead of using the passed invoice object
+    const latestInvoiceData = studentInvoiceStatus[invoice.id];
+    let updatedInvoice = { ...invoice };
+    
+    // Merge with latest data if available
+    if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
+      updatedInvoice = {
+        ...invoice,
+        studentName: latestInvoiceData.studentName || invoice.studentName,
+        studentCode: latestInvoiceData.studentCode || invoice.studentCode,
+        totalSessions: latestInvoiceData.totalSessions || invoice.totalSessions,
+        totalAmount: latestInvoiceData.totalAmount || invoice.totalAmount,
+        discount: latestInvoiceData.discount || invoice.discount,
+        finalAmount: latestInvoiceData.finalAmount || invoice.finalAmount,
+        sessions: latestInvoiceData.sessions || invoice.sessions
+      };
+    }
+    
+    // Always regenerate HTML with latest data to include any edits
+    const freshContent = generateStudentInvoiceHTML(updatedInvoice, includeQR);
+    
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
@@ -1943,7 +2719,7 @@ const InvoicePage = () => {
         </style>
       </head>
       <body>
-        ${content}
+        ${freshContent}
       </body>
       </html>
     `);
@@ -1951,6 +2727,91 @@ const InvoicePage = () => {
     setTimeout(() => {
       printWindow.print();
     }, 500);
+  };
+
+  // Bulk print invoices
+  const handleBulkPrintInvoices = () => {
+    if (selectedRowKeys.length === 0) {
+      message.warning("Vui lòng chọn ít nhất một phiếu thu để in");
+      return;
+    }
+
+    // Get all invoices for selected students
+    const groupedByStudent = new Map(groupedStudentInvoices.map((g) => [g.studentId, g]));
+    const invoicesToPrint: StudentInvoice[] = [];
+
+    selectedRowKeys.forEach((studentIdKey) => {
+      const group = groupedByStudent.get(String(studentIdKey));
+      if (group) {
+        invoicesToPrint.push(...group.invoices);
+      }
+    });
+
+    if (invoicesToPrint.length === 0) {
+      message.warning("Không tìm thấy phiếu thu để in");
+      return;
+    }
+
+    // Create a new window with all invoices
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) {
+      message.error("Không thể mở cửa sổ in. Vui lòng cho phép mở popup.");
+      return;
+    }
+
+    // Generate HTML for all invoices
+    const allInvoiceHTML = invoicesToPrint
+      .map((invoice) => {
+        const latestInvoiceData = studentInvoiceStatus[invoice.id];
+        let updatedInvoice = { ...invoice };
+
+        if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
+          updatedInvoice = {
+            ...invoice,
+            studentName: latestInvoiceData.studentName || invoice.studentName,
+            studentCode: latestInvoiceData.studentCode || invoice.studentCode,
+            totalSessions: latestInvoiceData.totalSessions || invoice.totalSessions,
+            totalAmount: latestInvoiceData.totalAmount || invoice.totalAmount,
+            discount: latestInvoiceData.discount || invoice.discount,
+            finalAmount: latestInvoiceData.finalAmount || invoice.finalAmount,
+            sessions: latestInvoiceData.sessions || invoice.sessions,
+          };
+        }
+
+        const hasQR = invoiceQRPreferences[updatedInvoice.id] !== false;
+        const freshContent = generateStudentInvoiceHTML(updatedInvoice, hasQR);
+        return `
+          <div style="page-break-after: always; margin-bottom: 20px;">
+            ${freshContent}
+          </div>
+        `;
+      })
+      .join("");
+
+    printWindow.document.write(`
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta charset="UTF-8">
+        <title>In hàng loạt phiếu thu</title>
+        <style>
+          body { margin: 0; padding: 20px; font-family: Arial, sans-serif; }
+          @media print {
+            body { margin: 0; }
+          }
+        </style>
+      </head>
+      <body>
+        ${allInvoiceHTML}
+      </body>
+      </html>
+    `);
+    printWindow.document.close();
+    setTimeout(() => {
+      printWindow.print();
+    }, 500);
+
+    message.success(`Đang in ${invoicesToPrint.length} phiếu thu...`);
   };
 
   // Expandable row render for student invoice details
@@ -2023,24 +2884,24 @@ const InvoicePage = () => {
         // Find course using Khối and Môn học from class info
         const course = classInfo
           ? courses.find((c) => {
-              if (c.Khối !== classInfo.Khối) return false;
-              const classSubject = classInfo["Môn học"];
-              const courseSubject = c["Môn học"];
-              // Direct match
-              if (classSubject === courseSubject) return true;
-              // Try matching with subject options (label <-> value)
-              const subjectOption = subjectOptions.find(
-                (opt) =>
-                  opt.label === classSubject || opt.value === classSubject
+            if (c.Khối !== classInfo.Khối) return false;
+            const classSubject = classInfo["Môn học"];
+            const courseSubject = c["Môn học"];
+            // Direct match
+            if (classSubject === courseSubject) return true;
+            // Try matching with subject options (label <-> value)
+            const subjectOption = subjectOptions.find(
+              (opt) =>
+                opt.label === classSubject || opt.value === classSubject
+            );
+            if (subjectOption) {
+              return (
+                courseSubject === subjectOption.label ||
+                courseSubject === subjectOption.value
               );
-              if (subjectOption) {
-                return (
-                  courseSubject === subjectOption.label ||
-                  courseSubject === subjectOption.value
-                );
-              }
-              return false;
-            })
+            }
+            return false;
+          })
           : undefined;
 
         const pricePerSession = course?.Giá || 0;
@@ -2219,11 +3080,20 @@ const InvoicePage = () => {
         title: "Tổng tiền",
         dataIndex: "totalAmount",
         key: "totalAmount",
-        width: 130,
-        render: (amount: number) => (
-          <Text style={{ color: "#36797f" }}>
-            {amount.toLocaleString("vi-VN")} đ
-          </Text>
+        width: 150,
+        render: (_: any, record: GroupedStudentInvoice) => (
+          <InputNumber
+            value={record.totalAmount}
+            min={0}
+            size="small"
+            style={{ width: "100%" }}
+            formatter={(v) => `${v}`.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}
+            parser={(v) => Number((v || "0").toString().replace(/,/g, ""))}
+            onChange={(val) => {
+              const newTotal = typeof val === "number" ? val : 0;
+              handleInlineUpdateTotalAmount(record, newTotal);
+            }}
+          />
         ),
       },
       {
@@ -2280,34 +3150,72 @@ const InvoicePage = () => {
         },
       },
       {
-        title: "Thao tác",
-        key: "actions",
-        width: 250,
+        title: "Tổng nợ lũy kế",
+        key: "totalDebt",
+        width: 140,
+        render: (_: any, record: GroupedStudentInvoice) => {
+          const totalDebt = calculateStudentTotalDebt(record.studentId, record.month, record.year);
+          const currentDebt = record.status === "unpaid" ? record.finalAmount : 0;
+          const combinedDebt = totalDebt + currentDebt;
+          return (
+            <Text strong style={{ color: combinedDebt > 0 ? "#ff4d4f" : "#52c41a", fontSize: "14px" }}>
+              {combinedDebt.toLocaleString("vi-VN")} đ
+            </Text>
+          );
+        },
+      },
+      {
+        title: "QR",
+        key: "qr",
+        width: 80,
+        align: "center" as const,
         render: (_: any, record: GroupedStudentInvoice) => {
           const firstInvoice = record.invoices[0];
+          const hasQR = invoiceQRPreferences[firstInvoice.id] !== false;
           return (
-            <Space>
-              <Button
-                size="small"
+            <Button
+              size="small"
+              type={hasQR ? "primary" : "default"}
+              onClick={() => {
+                setInvoiceQRPreferences(prev => ({
+                  ...prev,
+                  [firstInvoice.id]: !hasQR
+                }));
+              }}
+            >
+              {hasQR ? "✓" : "✗"}
+            </Button>
+          );
+        },
+      },
+      {
+        title: "Thao tác",
+        key: "actions",
+        width: 80,
+        align: "center" as const,
+        render: (_: any, record: GroupedStudentInvoice) => {
+          const firstInvoice = record.invoices[0];
+          const hasQR = invoiceQRPreferences[firstInvoice.id] !== false;
+          
+          const menu = (
+            <Menu>
+              <Menu.Item
+                key="view"
                 icon={<EyeOutlined />}
                 onClick={() => viewStudentInvoice(firstInvoice)}
               >
                 Xem
-              </Button>
-              <Button
-                size="small"
-                type="primary"
+              </Menu.Item>
+              <Menu.Item
+                key="edit"
                 icon={<EditOutlined />}
                 onClick={() => {
                   setEditingInvoice(firstInvoice);
-                  // Initialize edit session prices from current data - grouped by subject
                   const prices: Record<string, number> = {};
                   firstInvoice.sessions?.forEach((session: AttendanceSession) => {
                     const classId = session["Class ID"];
                     const classData = classes.find(c => c.id === classId);
                     const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
-                    
-                    // Only set once per subject (take first session price)
                     if (prices[subject] === undefined) {
                       prices[subject] = Number(getSafeField(session, "Giá/buổi")) || 0;
                     }
@@ -2318,42 +3226,54 @@ const InvoicePage = () => {
                 }}
               >
                 Sửa
-              </Button>
-              <Button
-                size="small"
-                type="primary"
+              </Menu.Item>
+              <Menu.Item
+                key="print"
+                icon={<PrinterOutlined />}
+                onClick={() => printInvoice(firstInvoice, hasQR)}
+              >
+                In
+              </Menu.Item>
+              <Menu.Divider />
+              <Menu.Item
+                key="confirm"
                 icon={<CheckCircleOutlined />}
                 onClick={() => {
-                  // Mark all invoices for this student as paid
                   record.invoices.forEach((invoice) => {
                     updateStudentInvoiceStatus(invoice.id, "paid");
                   });
                 }}
               >
                 Xác nhận TT
-              </Button>
-              <Popconfirm
-                title="Xác nhận xóa"
-                description="Bạn có chắc chắn muốn xóa tất cả phiếu thu của học sinh này? Dữ liệu sẽ bị xóa vĩnh viễn."
-                onConfirm={() => {
-                  // Delete all invoices for this student
-                  record.invoices.forEach((invoice) => {
-                    handleDeleteInvoice(invoice.id);
+              </Menu.Item>
+              <Menu.Item
+                key="delete"
+                danger
+                icon={<DeleteOutlined />}
+                onClick={() => {
+                  Modal.confirm({
+                    title: "Xác nhận xóa",
+                    content: "Bạn có chắc chắn muốn xóa tất cả phiếu thu của học sinh này?",
+                    okText: "Xóa",
+                    cancelText: "Hủy",
+                    okType: "danger",
+                    onOk: () => {
+                      record.invoices.forEach((invoice) => {
+                        handleDeleteInvoice(invoice.id);
+                      });
+                    },
                   });
                 }}
-                okText="Xóa"
-                cancelText="Hủy"
-                okType="danger"
               >
-                <Button
-                  size="small"
-                  danger
-                  icon={<DeleteOutlined />}
-                >
-                  Xóa
-                </Button>
-              </Popconfirm>
-            </Space>
+                Xóa
+              </Menu.Item>
+            </Menu>
+          );
+
+          return (
+            <Dropdown overlay={menu} trigger={['click']}>
+              <Button size="small" icon={<MoreOutlined />} />
+            </Dropdown>
           );
         },
       },
@@ -2452,6 +3372,21 @@ const InvoicePage = () => {
           return (
             <Text strong style={{ color: debt > 0 ? "#ff4d4f" : "#52c41a", fontSize: "14px" }}>
               {debt.toLocaleString("vi-VN")} đ
+            </Text>
+          );
+        },
+      },
+      {
+        title: "Tổng nợ lũy kế",
+        key: "totalDebt",
+        width: 140,
+        render: (_: any, record: StudentInvoice) => {
+          const totalDebt = calculateStudentTotalDebt(record.studentId, record.month, record.year);
+          const currentDebt = record.status === "unpaid" ? record.finalAmount : 0;
+          const combinedDebt = totalDebt + currentDebt;
+          return (
+            <Text strong style={{ color: combinedDebt > 0 ? "#ff4d4f" : "#52c41a", fontSize: "14px" }}>
+              {combinedDebt.toLocaleString("vi-VN")} đ
             </Text>
           );
         },
@@ -2650,10 +3585,10 @@ const InvoicePage = () => {
         // Find course using Khối and Môn học from class info
         const course = classInfo
           ? courses.find(
-              (c) =>
-                c.Khối === classInfo.Khối &&
-                c["Môn học"] === classInfo["Môn học"]
-            )
+            (c) =>
+              c.Khối === classInfo.Khối &&
+              c["Môn học"] === classInfo["Môn học"]
+          )
           : undefined;
 
         const salaryPerSession =
@@ -2917,7 +3852,7 @@ const InvoicePage = () => {
               placeholder="Nhập tên học sinh..."
               prefix={<SearchOutlined />}
               value={studentSearchTerm}
-              onChange={(e) => setStudentSearchTerm(e.target.value.trim())}
+              onChange={(e) => setStudentSearchTerm(e.target.value)}
               allowClear
             />
           </Col>
@@ -3039,14 +3974,23 @@ const InvoicePage = () => {
       {/* Bulk delete button */}
       {selectedRowKeys.length > 0 && (
         <div className="mb-4">
-          <Button
-            type="primary"
-            danger
-            icon={<DeleteOutlined />}
-            onClick={handleDeleteMultipleInvoices}
-          >
-            Xóa {selectedRowKeys.length} phiếu đã chọn
-          </Button>
+          <Space>
+            <Button
+              type="primary"
+              icon={<PrinterOutlined />}
+              onClick={handleBulkPrintInvoices}
+            >
+              In {selectedRowKeys.length} phiếu đã chọn
+            </Button>
+            <Button
+              type="primary"
+              danger
+              icon={<DeleteOutlined />}
+              onClick={handleDeleteMultipleInvoices}
+            >
+              Xóa {selectedRowKeys.length} phiếu đã chọn
+            </Button>
+          </Space>
         </div>
       )}
 
@@ -3385,12 +4329,12 @@ const InvoicePage = () => {
             sessions: AttendanceSession[];
             currentPrice: number;
           }> = {};
-          
+
           editingInvoice.sessions.forEach((session: AttendanceSession) => {
             const classId = session["Class ID"];
             const classData = classes.find(c => c.id === classId);
             const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
-            
+
             if (!subjectGroups[subject]) {
               subjectGroups[subject] = {
                 subject,
@@ -3399,7 +4343,7 @@ const InvoicePage = () => {
                 currentPrice: editSessionPrices[subject] || (getSafeField(session, "Giá/buổi") || 0),
               };
             }
-            
+
             subjectGroups[subject].sessionCount++;
             subjectGroups[subject].sessions.push(session);
           });

@@ -116,7 +116,13 @@ const useTable = <T extends object>() => {
       clearFilters,
       close,
     }) => (
-      <div style={{ padding: 8 }} onKeyDown={(e) => e.stopPropagation()}>
+      <div style={{ padding: 8 }} onKeyDown={(e) => {
+        // Only stop propagation for special keys (Enter, Escape, Arrow keys)
+        // Allow normal text input including spaces
+        if (e.key === 'Enter' || e.key === 'Escape' || e.key.startsWith('Arrow')) {
+          e.stopPropagation();
+        }
+      }}>
         <Input
           ref={searchInput}
           placeholder="Nhập giá trị tìm kiếm"

@@ -304,6 +304,16 @@ const TeacherClassView = () => {
                 extra={
                   <Space>
                     <Button
+                      type="primary"
+                      icon={<PlusOutlined />}
+                      onClick={() => {
+                        setSelectedClassForDoc(classData);
+                        setIsDocumentModalOpen(true);
+                      }}
+                    >
+                      Thêm tài liệu
+                    </Button>
+                    <Button
                       icon={<FileTextOutlined />}
                       onClick={() =>
                         navigate(`/workspace/classes/${classData.id}/grades`)

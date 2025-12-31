@@ -402,7 +402,7 @@ const FinancialSummaryPage = () => {
 
   // Calculate total teacher salaries from attendance sessions
   const totalTeacherSalaries = useMemo(() => {
-    return teacherSalaryDetails.reduce((sum, detail) => sum + detail.totalSalary, 0);
+    return Math.round(teacherSalaryDetails.reduce((sum, detail) => sum + detail.totalSalary, 0));
   }, [teacherSalaryDetails]);
 
   // Calculate revenue from invoices (by class)
@@ -411,7 +411,7 @@ const FinancialSummaryPage = () => {
       classId: string;
       className: string;
       totalSessions: number;
-      totalStudents: Set<string>; // Tổng số học sinh (unique)
+      totalStudents: number; // Tổng số học sinh (unique)
       totalRevenue: number;
       avgRevenuePerSession: number;
     }> = {};
@@ -484,7 +484,7 @@ const FinancialSummaryPage = () => {
             classId,
             className,
             totalSessions: 0,
-            totalStudents: new Set<string>(),
+            totalStudents: new Set<string>() as any,
             totalRevenue: 0,
             avgRevenuePerSession: pricePerSession,
           };
@@ -492,17 +492,17 @@ const FinancialSummaryPage = () => {
 
         // Add sessions and revenue proportionally
         classRevenueMap[classId].totalSessions += dist.sessions;
-        classRevenueMap[classId].totalStudents.add(studentId);
+        ((classRevenueMap[classId].totalStudents as unknown) as Set<string>).add(studentId);
         // Distribute amount proportionally based on sessions
-        const classAmount = (dist.sessions / invoiceTotalSessions) * invoiceTotalAmount;
-        classRevenueMap[classId].totalRevenue += classAmount;
+        const classAmount = Math.round((dist.sessions / invoiceTotalSessions) * invoiceTotalAmount);
+        classRevenueMap[classId].totalRevenue = Math.round(classRevenueMap[classId].totalRevenue + classAmount);
       });
     });
 
     // Convert Set to number for totalStudents
     const result = Object.values(classRevenueMap).map(item => ({
       ...item,
-      totalStudents: item.totalStudents.size || 0,
+      totalStudents: ((item.totalStudents as unknown) as Set<string>).size || 0,
     })).sort((a, b) => b.totalRevenue - a.totalRevenue);
 
     // Debug: Log totals for verification
@@ -522,7 +522,7 @@ const FinancialSummaryPage = () => {
 
   // Calculate total revenue from attendance sessions
   const totalRevenue = useMemo(() => {
-    return revenueByClass.reduce((sum, classRev) => sum + classRev.totalRevenue, 0);
+    return Math.round(revenueByClass.reduce((sum, classRev) => sum + classRev.totalRevenue, 0));
   }, [revenueByClass]);
 
   // Calculate total revenue from student invoices (for comparison)
@@ -545,7 +545,7 @@ const FinancialSummaryPage = () => {
       total += invoice.totalAmount || 0;
     });
     
-    return total;
+    return Math.round(total);
   }, [studentInvoices, selectedMonth, selectedYear, viewMode]);
 
   // Calculate total discount from student invoices (auto expense)
@@ -568,7 +568,7 @@ const FinancialSummaryPage = () => {
       discount += invoice.discount || 0;
     });
     
-    return discount;
+    return Math.round(discount);
   }, [studentInvoices, selectedMonth, selectedYear, viewMode]);
 
   // Calculate total expenses (manual expenses + teacher salaries + discount from invoices)
@@ -588,13 +588,13 @@ const FinancialSummaryPage = () => {
     }
     
     // Add teacher salaries and discount from invoices to total expenses
-    const total = manualExpenses + totalTeacherSalaries + totalDiscount;
+    const total = Math.round(manualExpenses + totalTeacherSalaries + totalDiscount);
     console.log("📊 Total expenses:", { manualExpenses, totalTeacherSalaries, totalDiscount, total });
     return total;
   }, [expenses, totalTeacherSalaries, totalDiscount, selectedMonth, selectedYear, viewMode]);
 
   // Net profit/loss
-  const netProfit = totalRevenue - totalExpenses;
+  const netProfit = Math.round(totalRevenue - totalExpenses);
 
   // Find students who attended but don't have invoices
   const studentsWithoutInvoices = useMemo(() => {
@@ -720,20 +720,55 @@ const FinancialSummaryPage = () => {
     }));
   }, [filteredExpenses, totalTeacherSalaries, totalDiscount]);
 
-  // Sync invoices from attendance sessions
+  // Sync invoices from attendance sessions (delete all unpaid and recreate from attendance)
   const syncInvoicesFromSessions = async () => {
     if (syncingInvoices) return;
     
     try {
       setSyncingInvoices(true);
-      message.loading("Đang đồng bộ hóa đơn từ điểm danh...", 0);
+      message.loading("Đang xóa và tạo lại hóa đơn từ điểm danh...", 0);
+
+      // Step 1: Delete all unpaid invoices for the selected period
+      const invoicesToDelete: string[] = [];
+      Object.entries(studentInvoices).forEach(([key, invoice]: [string, any]) => {
+        if (!invoice || typeof invoice !== "object") return;
+        
+        const invoiceMonth = invoice.month ?? 0;
+        const invoiceYear = invoice.year ?? 0;
+        const invoiceStatus = invoice.status || "unpaid";
+        
+        // Check if invoice is in selected period
+        let matchesPeriod = false;
+        if (viewMode === "year") {
+          matchesPeriod = invoiceYear === selectedYear;
+        } else {
+          matchesPeriod = invoiceMonth === selectedMonth && invoiceYear === selectedYear;
+        }
+        
+        // Add to delete list if unpaid and matches period
+        if (matchesPeriod && invoiceStatus !== "paid") {
+          invoicesToDelete.push(key);
+        }
+      });
+
+      // Delete unpaid invoices
+      if (invoicesToDelete.length > 0) {
+        message.loading(`Đang xóa ${invoicesToDelete.length} hóa đơn cũ...`, 0);
+        const deletePromises = invoicesToDelete.map((key) => {
+          const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+          return remove(invoiceRef);
+        });
+        await Promise.all(deletePromises);
+      }
+
+      message.loading("Đang tạo lại hóa đơn từ điểm danh...", 0);
 
       const invoicesToUpdate: Array<{
         key: string;
         invoice: any;
       }> = [];
 
-      // Process each filtered session
+      // Step 2: Create new invoices from attendance sessions
       filteredSessions.forEach((session) => {
         const classId = session["Class ID"];
         const classData = classes.find(c => c.id === classId);
@@ -784,14 +819,13 @@ const FinancialSummaryPage = () => {
           if (!student) return;
 
           const invoiceKey = `${studentId}-${sessionMonth}-${sessionYear}`;
+          
+          // Check if invoice was paid (we need to preserve paid invoices)
           const existingInvoice = studentInvoices[invoiceKey];
           const existingStatus = typeof existingInvoice === "object" && existingInvoice !== null 
             ? existingInvoice.status 
             : existingInvoice;
           const isPaid = existingStatus === "paid";
-
-          // Don't modify paid invoices
-          if (isPaid) return;
 
           const sessionInfo = {
             Ngày: session["Ngày"],
@@ -803,7 +837,8 @@ const FinancialSummaryPage = () => {
           // Find or create invoice entry
           let invoiceEntry = invoicesToUpdate.find(i => i.key === invoiceKey);
           if (!invoiceEntry) {
-            if (existingInvoice && typeof existingInvoice === "object") {
+            // If paid invoice exists, preserve it with discount
+            if (isPaid && existingInvoice && typeof existingInvoice === "object") {
               invoiceEntry = {
                 key: invoiceKey,
                 invoice: {
@@ -812,6 +847,7 @@ const FinancialSummaryPage = () => {
                 },
               };
             } else {
+              // Create new invoice
               invoiceEntry = {
                 key: invoiceKey,
                 invoice: {
@@ -823,15 +859,18 @@ const FinancialSummaryPage = () => {
                   year: sessionYear,
                   totalSessions: 0,
                   totalAmount: 0,
-                  discount: existingInvoice && typeof existingInvoice === "object" ? (existingInvoice.discount || 0) : 0,
+                  discount: 0,
                   finalAmount: 0,
-                  status: existingStatus === "paid" ? "paid" : "unpaid",
+                  status: "unpaid",
                   sessions: [],
                 },
               };
             }
             invoicesToUpdate.push(invoiceEntry);
           }
+
+          // For paid invoices, don't add new sessions
+          if (isPaid) return;
 
           // Check if session already exists
           const sessionExists = invoiceEntry.invoice.sessions.some(
@@ -841,10 +880,10 @@ const FinancialSummaryPage = () => {
           if (!sessionExists) {
             invoiceEntry.invoice.sessions.push(sessionInfo);
             invoiceEntry.invoice.totalSessions = (invoiceEntry.invoice.totalSessions || 0) + 1;
-            invoiceEntry.invoice.totalAmount = (invoiceEntry.invoice.totalAmount || 0) + pricePerSession;
+            invoiceEntry.invoice.totalAmount = Math.round((invoiceEntry.invoice.totalAmount || 0) + Math.round(pricePerSession));
             invoiceEntry.invoice.finalAmount = Math.max(
               0,
-              invoiceEntry.invoice.totalAmount - (invoiceEntry.invoice.discount || 0)
+              Math.round(invoiceEntry.invoice.totalAmount - (invoiceEntry.invoice.discount || 0))
             );
           }
         });
@@ -856,10 +895,17 @@ const FinancialSummaryPage = () => {
         return update(invoiceRef, invoice);
       });
 
-      await Promise.all(updatePromises);
+      // Step 3: Create/Update invoices
+      if (invoicesToUpdate.length > 0) {
+        const updatePromises = invoicesToUpdate.map(({ key, invoice }) => {
+          const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${key}`);
+          return update(invoiceRef, invoice);
+        });
+        await Promise.all(updatePromises);
+      }
 
       message.destroy();
-      message.success(`Đã đồng bộ ${invoicesToUpdate.length} hóa đơn từ điểm danh`);
+      message.success(`Đã xóa ${invoicesToDelete.length} hóa đơn cũ và tạo lại ${invoicesToUpdate.length} hóa đơn từ điểm danh`);
     } catch (error) {
       console.error("Error syncing invoices:", error);
       message.destroy();
@@ -1581,16 +1627,19 @@ const FinancialSummaryPage = () => {
             <Text type="secondary">
               Xuất báo cáo tài chính chi tiết sang file Excel
             </Text>
+            <Button
+              type="default"
+              icon={<RiseOutlined />}
+              onClick={syncInvoicesFromSessions}
+              size="large"
+              loading={syncingInvoices}
+            >
+              Cập nhật dữ liệu từ điểm danh
+            </Button>
             {totalRevenue !== totalRevenueFromInvoices && (
-              <Button
-                type="default"
-                icon={<RiseOutlined />}
-                onClick={syncInvoicesFromSessions}
-                size="large"
-                loading={syncingInvoices}
-              >
-                Đồng bộ hóa đơn từ điểm danh
-              </Button>
+              <Text type="warning" style={{ marginLeft: 8 }}>
+                (Có sự chênh lệch giữa điểm danh và hóa đơn)
+              </Text>
             )}
           </Space>
         </Card>
@@ -2005,7 +2054,7 @@ const FinancialSummaryPage = () => {
               }}
               onBlur={(e) => {
                 // When user clicks away, if they typed a new value, add it
-                const inputValue = ((e.currentTarget as HTMLInputElement).value || "").trim();
+                const inputValue = (e.currentTarget as HTMLInputElement).value?.trim();
                 if (inputValue && !expenseCategories.includes(inputValue)) {
                   addExpenseCategory(inputValue);
                   form.setFieldsValue({ category: inputValue });
@@ -2014,8 +2063,8 @@ const FinancialSummaryPage = () => {
               }}
               onKeyDown={(e) => {
                 // When user presses Enter on a new value
-                if ((e as any).key === 'Enter') {
-                  const inputValue = ((e.currentTarget as HTMLInputElement).value || "").trim();
+                if (e.key === 'Enter') {
+                  const inputValue = (e.currentTarget as HTMLInputElement).value?.trim();
                   if (inputValue && !expenseCategories.includes(inputValue)) {
                     e.preventDefault();
                     addExpenseCategory(inputValue);
