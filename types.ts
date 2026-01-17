@@ -89,6 +89,8 @@ export interface AttendanceSession {
     "Người điểm danh"?: string; // Person who took attendance
     "Thời gian hoàn thành"?: string; // Completion time
     "Người hoàn thành"?: string; // Person who completed
+    "Học phí mỗi buổi"?: number; // Tuition fee per session - liên kết với học phí học sinh
+    "Lương GV"?: number; // Teacher salary per session - liên kết với lương giáo viên
 }
 
 export interface ScoreDetail {

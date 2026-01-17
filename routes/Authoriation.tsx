@@ -6,6 +6,15 @@ const Authoriation = ({ children }: { children: React.ReactNode }) => {
   const { currentUser, userProfile, loading } = useAuth();
   console.log("Authoriation - User Profile:", userProfile);
   
+  // Show loading state
+  if (loading) {
+    return (
+      <div className="container p-6">
+        <div className="text-center">Đang tải...</div>
+      </div>
+    );
+  }
+  
   // Check if user is admin by either isAdmin flag or role
   const isAdmin = userProfile?.isAdmin === true || userProfile?.role?.toLowerCase() === "admin";
   

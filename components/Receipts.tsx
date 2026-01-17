@@ -17,6 +17,22 @@ import {
   MoneyCollectOutlined,
   PayCircleOutlined,
 } from "@ant-design/icons";
+import dayjs from "dayjs";
+
+// Helper functions
+const parseMoney = (value: any) => {
+  if (typeof value === "number") return value;
+  if (!value) return 0;
+  return parseFloat(value.toString().replace(/,/g, ""));
+};
+
+const formatVND = (value: any) => {
+  return new Intl.NumberFormat("vi-VN", {
+    style: "currency",
+    currency: "VND",
+  }).format(parseMoney(value));
+};
+
 
 const { TextArea } = Input;
 const { Title, Text } = Typography;
@@ -51,19 +67,19 @@ interface TuitionData {
 interface SalaryData {
   teacherName: string;
   month: string;
-  subject: string;
-  caTH: string;
-  luongTH: string;
-  caTHCS: string;
-  luongTHCS: string;
-  caTHPT: string;
-  luongTHPT: string;
-  tongLuong: string;
-  note: string;
-  // VietQR config
-  bankId?: string;
-  accountNo?: string;
-  accountName?: string;
+  subjects?: string[];
+  subject?: string;
+  totalSessions?: number;
+  totalSalary?: number;
+  tongLuong?: any;
+  caTH?: any;
+  luongTH?: any;
+  caTHCS?: any;
+  luongTHCS?: any;
+  caTHPT?: any;
+  luongTHPT?: any;
+  details?: any[];
+  [key: string]: any;
 }
 
 // Generate VietQR URL with hardcoded bank info
@@ -134,8 +150,7 @@ const exportAsImage = async (element: HTMLElement, filename: string) => {
   } catch (error) {
     console.error("Error exporting image:", error);
     message.error(
-      `Lỗi khi xuất ảnh: ${
-        error instanceof Error ? error.message : "Không xác định"
+      `Lỗi khi xuất ảnh: ${error instanceof Error ? error.message : "Không xác định"
       }\n\nThử refresh lại trang, xóa cache dev server (node_modules/.vite) và khởi động lại dev server!`
     );
   }
@@ -154,8 +169,7 @@ export const TuitionReceipt: React.FC<{
         setIsExporting(true);
         await exportAsImage(
           receiptRef.current,
-          `Hoc_Phi_${data.studentName.replace(/\s+/g, "_")}_Thang_${
-            data.month
+          `Hoc_Phi_${data.studentName.replace(/\s+/g, "_")}_Thang_${data.month
           }.png`
         );
         onExport();
@@ -188,12 +202,12 @@ export const TuitionReceipt: React.FC<{
   const subjects = data.subjects && data.subjects.length > 0
     ? data.subjects
     : [{
-        subject: "Học phí",
-        class: data.studentClass || "Lớp",
-        sessions: data.totalSessions,
-        pricePerSession: data.pricePerSession.replace(/[^0-9]/g, ""),
-        total: data.totalAmount.replace(/[^0-9]/g, ""),
-      }];
+      subject: "Học phí",
+      class: data.studentClass || "Lớp",
+      sessions: data.totalSessions,
+      pricePerSession: data.pricePerSession.replace(/[^0-9]/g, ""),
+      total: data.totalAmount.replace(/[^0-9]/g, ""),
+    }];
 
   // Calculate totals
   const totalSessions = subjects.reduce((sum, s) => sum + s.sessions, 0);
@@ -203,19 +217,19 @@ export const TuitionReceipt: React.FC<{
     <div style={{ display: "flex", justifyContent: "center", alignItems: "center", minHeight: "100vh", padding: "20px", backgroundColor: "#f0f0f0", fontFamily: "'Roboto', sans-serif" }}>
       <div style={{ width: "100%", maxWidth: "800px" }}>
         <div style={{ marginBottom: "20px", display: "flex", justifyContent: "flex-end" }}>
-        <Button
-          type="primary"
-          icon={<DownloadOutlined />}
-          onClick={handleExport}
-          loading={isExporting}
+          <Button
+            type="primary"
+            icon={<DownloadOutlined />}
+            onClick={handleExport}
+            loading={isExporting}
             style={{ backgroundColor: "#103458" }}
-        >
-          {isExporting ? "Đang xuất..." : "📸 Xuất ảnh"}
-        </Button>
-      </div>
+          >
+            {isExporting ? "Đang xuất..." : "📸 Xuất ảnh"}
+          </Button>
+        </div>
 
-      <div
-        ref={receiptRef}
+        <div
+          ref={receiptRef}
           style={{
             width: "100%",
             maxWidth: "800px",
@@ -225,37 +239,37 @@ export const TuitionReceipt: React.FC<{
             position: "relative",
             borderRadius: "8px",
           }}
-      >
-        {/* Background Logo */}
-        <div
-          style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-              pointerEvents: "none",
-          }}
         >
-          <img
-            src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F5efd9944.%E1%BA%A2nh.120320.png"
-            alt="Background Logo"
+          {/* Background Logo */}
+          <div
             style={{
-              width: "auto",
-              height: "400px",
-              maxWidth: "400px",
-              objectFit: "contain",
-                opacity: 0.3,
-              filter: "grayscale(20%) brightness(1.1)",
-              userSelect: "none",
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              bottom: 0,
+              zIndex: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
               pointerEvents: "none",
             }}
-          />
-        </div>
+          >
+            <img
+              src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F5efd9944.%E1%BA%A2nh.120320.png"
+              alt="Background Logo"
+              style={{
+                width: "auto",
+                height: "400px",
+                maxWidth: "400px",
+                objectFit: "contain",
+                opacity: 0.3,
+                filter: "grayscale(20%) brightness(1.1)",
+                userSelect: "none",
+                pointerEvents: "none",
+              }}
+            />
+          </div>
 
           {/* Watermark */}
           <div
@@ -285,7 +299,7 @@ export const TuitionReceipt: React.FC<{
               position: "relative",
               zIndex: 1,
             }}
-        >
+          >
             <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: "15px", marginBottom: "15px" }}>
               <img
                 src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png"
@@ -301,7 +315,7 @@ export const TuitionReceipt: React.FC<{
               </div>
             </div>
             <h1 style={{ textTransform: "uppercase", fontSize: "28px", fontWeight: 700, letterSpacing: "1px", margin: 0 }}>
-            PHIẾU THU HỌC PHÍ THÁNG {data.month}
+              PHIẾU THU HỌC PHÍ THÁNG {data.month}
             </h1>
           </div>
 
@@ -338,7 +352,7 @@ export const TuitionReceipt: React.FC<{
                 <strong>Số tài khoản:</strong> {accountNo}
               </div>
             </div>
-              </div>
+          </div>
 
           {/* Table */}
           <div style={{ padding: "0 40px", position: "relative", zIndex: 1 }}>
@@ -351,15 +365,15 @@ export const TuitionReceipt: React.FC<{
               }}
             >
               <thead style={{ backgroundColor: "#103458", color: "white" }}>
-                  <tr>
+                <tr>
                   <th style={{ padding: "15px", textAlign: "center", fontWeight: 500 }}>Môn học</th>
                   <th style={{ padding: "15px", textAlign: "center", fontWeight: 500 }}>Lớp</th>
                   <th style={{ padding: "15px", textAlign: "center", fontWeight: 500 }}>Số buổi</th>
                   <th style={{ padding: "15px", textAlign: "center", fontWeight: 500 }}>Giá/buổi</th>
                   <th style={{ padding: "15px", textAlign: "center", fontWeight: 500 }}>Thành tiền</th>
-                  </tr>
-                </thead>
-                <tbody>
+                </tr>
+              </thead>
+              <tbody>
                 {subjects.map((item, index) => {
                   const priceNum = parseInt(item.pricePerSession.replace(/[^0-9]/g, "") || "0");
                   const totalNum = parseInt(item.total.replace(/[^0-9]/g, "") || "0");
@@ -375,10 +389,10 @@ export const TuitionReceipt: React.FC<{
                           <i className={`fa-solid ${getSubjectIcon(item.subject)}`} style={{ color: "#103458", width: "20px" }}></i>
                           {item.subject}
                         </div>
-                    </td>
+                      </td>
                       <td style={{ padding: "12px 15px", textAlign: "center", color: "#333", borderBottom: "1px solid #ddd" }}>
                         {item.class}
-                    </td>
+                      </td>
                       <td style={{ padding: "12px 15px", textAlign: "center", color: "#333", borderBottom: "1px solid #ddd" }}>
                         {item.sessions}
                       </td>
@@ -387,12 +401,12 @@ export const TuitionReceipt: React.FC<{
                       </td>
                       <td style={{ padding: "12px 15px", textAlign: "center", color: "#333", borderBottom: "1px solid #ddd" }}>
                         {totalNum.toLocaleString("vi-VN")}
-                    </td>
-                  </tr>
+                      </td>
+                    </tr>
                   );
                 })}
-                </tbody>
-              </table>
+              </tbody>
+            </table>
           </div>
 
           {/* Footer */}
@@ -433,7 +447,7 @@ export const TuitionReceipt: React.FC<{
               >
                 Tổng học phí
               </span>
-                </div>
+            </div>
 
             <div
               style={{
@@ -539,8 +553,8 @@ export const TuitionReceipt: React.FC<{
                   src={generateVietQR(data.totalAmount, data.studentName, data.month)}
                   alt="QR Code"
                   style={{ width: "100%", height: "auto", display: "block" }}
-                    crossOrigin="anonymous"
-                  />
+                  crossOrigin="anonymous"
+                />
                 <div style={{ fontSize: "12px", marginTop: "5px", fontWeight: "bold" }}>
                   Quét mã để thanh toán
                 </div>
@@ -564,14 +578,72 @@ export const SalarySlip: React.FC<{
   const salaryRef = useRef<HTMLDivElement>(null);
   const [isExporting, setIsExporting] = useState(false);
 
+  // Adapter: Convert old data structure to new detail structure if details is missing
+  const derivedDetails: {
+    className: string;
+    subject: string;
+    sessionCount: number | string;
+    totalSalary: number | string;
+  }[] = data.details || [];
+
+  if (derivedDetails.length === 0) {
+    if (data.caTH && parseMoney(data.caTH) > 0) {
+      derivedDetails.push({
+        className: "Khối Tiểu Học",
+        subject: data.subject || "Toán",
+        sessionCount: data.caTH,
+        totalSalary: parseMoney(data.luongTH),
+      });
+    }
+    if (data.caTHCS && parseMoney(data.caTHCS) > 0) {
+      derivedDetails.push({
+        className: "Khối THCS",
+        subject: data.subject || "Toán",
+        sessionCount: data.caTHCS,
+        totalSalary: parseMoney(data.luongTHCS),
+      });
+    }
+    if (data.caTHPT && parseMoney(data.caTHPT) > 0) {
+      derivedDetails.push({
+        className: "Khối THPT",
+        subject: data.subject || "Toán",
+        sessionCount: data.caTHPT,
+        totalSalary: parseMoney(data.luongTHPT),
+      });
+    }
+  }
+
+  const subjects =
+    data.subjects && data.subjects.length > 0
+      ? data.subjects
+      : [data.subject].filter(Boolean);
+  const totalSessions =
+    data.totalSessions !== undefined
+      ? data.totalSessions
+      : parseMoney(data.caTH) +
+      parseMoney(data.caTHCS) +
+      parseMoney(data.caTHPT);
+
+  const totalSalaryValue =
+    data.totalSalary !== undefined
+      ? data.totalSalary
+      : parseMoney(data.tongLuong);
+
+  const currentData = {
+    ...data,
+    details: derivedDetails,
+    subjects,
+    totalSessions,
+    totalSalary: totalSalaryValue,
+  };
+
   const handleExport = async () => {
     if (salaryRef.current) {
       try {
         setIsExporting(true);
         await exportAsImage(
           salaryRef.current,
-          `Phieu_Luong_${data.teacherName.replace(/\s+/g, "_")}_Thang_${
-            data.month
+          `Phieu_Luong_${data.teacherName.replace(/\s+/g, "_")}_Thang_${data.month
           }.png`
         );
         onExport();
@@ -584,110 +656,272 @@ export const SalarySlip: React.FC<{
   };
 
   return (
-    <div className="max-w-3xl mx-auto my-6">
-      <div className="mb-4 flex justify-end">
+    <div style={{ display: "flex", flexDirection: "column", alignItems: "center", padding: "20px 0" }}>
+      {/* Export Button */}
+      <div style={{ width: "210mm", marginBottom: "16px", display: "flex", justifyContent: "flex-end" }}>
         <Button
           type="primary"
           icon={<DownloadOutlined />}
           onClick={handleExport}
           loading={isExporting}
-          style={{ backgroundColor: "#36797f" }}
+          style={{ backgroundColor: "#003a6b" }}
         >
-          {isExporting ? "Đang xuất..." : "📸 Xuất ảnh"}
+          {isExporting ? "Đang xuất..." : "📸 Xuất ảnh A5"}
         </Button>
       </div>
 
+      {/* Main Salary Slip Container - A5 Landscape Size (210mm x ~148mm) */}
       <div
         ref={salaryRef}
-        className="bg-white rounded-lg shadow-md border relative overflow-hidden"
-        style={{ borderColor: COLORS.dark }}
+        style={{
+          width: "210mm", // Chiều rộng chuẩn A5 Landscape (bằng chiều rộng A4 dọc)
+          minHeight: "148mm", // Chiều cao chuẩn A5 Landscape
+          backgroundColor: "white",
+          borderRadius: "0", // Bỏ border radius để in ra vuông vắn hơn
+          boxShadow: "0 4px 12px rgba(0,0,0,0.1)", // Shadow nhẹ
+          border: "1px solid #e0e0e0",
+          position: "relative",
+          overflow: "hidden",
+          fontFamily: "'Times New Roman', Times, serif",
+          fontSize: "12px", // Giảm nhẹ font size cho hợp khổ A5
+          boxSizing: "border-box"
+        }}
       >
-        {/* Background Logo */}
+        {/* Header Section */}
         <div
-          className="absolute inset-0 flex items-center justify-center pointer-events-none"
           style={{
-            position: "absolute",
-            top: 0,
-            left: 0,
-            right: 0,
-            bottom: 0,
-            zIndex: 0,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
+            backgroundColor: "#003a6b",
+            padding: "10px 20px", // Giảm padding vertical
+            color: "white",
           }}
         >
-          <img
-            src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png"
-            alt="Background Logo"
-            style={{
-              width: "auto",
-              height: "300px",
-              maxWidth: "300px",
-              objectFit: "contain",
-              opacity: 0.15,
-              filter: "grayscale(20%) brightness(1.1)",
-              userSelect: "none",
-              pointerEvents: "none",
-            }}
-          />
+          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+            <div style={{ display: "flex", alignItems: "center" }}>
+              <img
+                src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png"
+                alt="Logo"
+                style={{
+                  width: "40px",
+                  height: "40px",
+                  objectFit: "contain",
+                  marginRight: "12px",
+                  backgroundColor: "white",
+                  borderRadius: "50%",
+                  padding: "2px",
+                }}
+              />
+              <div>
+                <div style={{ fontSize: "11px", fontWeight: 500, textTransform: "uppercase", opacity: 0.9, fontFamily: "'Times New Roman', Times, serif" }}>
+                  TRUNG TÂM TRI TUỆ 8+
+                </div>
+                <div style={{ fontSize: "18px", fontWeight: "bold", textTransform: "uppercase", lineHeight: "1.2", fontFamily: "'Times New Roman', Times, serif" }}>
+                  Phiếu Lương Giáo Viên
+                </div>
+              </div>
+            </div>
+
+            {/* Đưa Tháng lên header cùng hàng để tiết kiệm diện tích dọc */}
+            <div style={{ textAlign: "right" }}>
+              <div style={{ fontSize: "14px", fontWeight: "bold", textTransform: "uppercase" }}>
+                THÁNG {currentData.month}
+              </div>
+              <div style={{ fontSize: "11px", fontStyle: "italic", opacity: 0.8 }}>
+                {dayjs().format("DD/MM/YYYY")}
+              </div>
+            </div>
+          </div>
         </div>
 
-        <div
-          className="p-6 relative"
-          style={{ zIndex: 10, position: "relative" }}
-        >
-          <Title level={3} style={{ textAlign: "center", color: "#36797f" }}>
-            PHIẾU LƯƠNG THÁNG {data.month}
-          </Title>
-          <Text
+        {/* Body Section */}
+        <div style={{ padding: "16px 20px", position: "relative" }}>
+          {/* Background Logo Watermark */}
+          <div
             style={{
-              display: "block",
-              textAlign: "center",
-              fontSize: 16,
-              fontWeight: "bold",
-              marginTop: 8,
+              position: "absolute",
+              top: "55%",
+              left: "50%",
+              transform: "translate(-50%, -50%)",
+              zIndex: 0,
+              pointerEvents: "none",
             }}
           >
-            Họ và tên: {data.teacherName}
-          </Text>
+            <img
+              src="https://www.appsheet.com/template/gettablefileurl?appName=Appsheet-325045268&tableName=Kho%20%E1%BA%A3nh&fileName=Kho%20%E1%BA%A3nh_Images%2F323065b6.%E1%BA%A2nh.115930.png"
+              alt="Background Logo"
+              style={{
+                width: "200px",
+                opacity: 0.06,
+                filter: "grayscale(100%)",
+              }}
+            />
+          </div>
 
-          <div className="mt-4 grid grid-cols-3 gap-2 text-sm">
-            <div
-              className="col-span-1 p-2 bg-["
-              style={{ background: COLORS.light }}
-            >
-              <div className="font-semibold">Khối</div>
+          <div style={{ position: "relative", zIndex: 10 }}>
+            {/* Info Columns: Adjusted Ratios */}
+            <div style={{ display: "flex", gap: "15px", marginBottom: "15px" }}>
+
+              {/* Teacher Info - Reduced Width (30%) */}
+              <div style={{ flex: "0.3" }}>
+                <div
+                  style={{
+                    borderLeft: "3px solid #003a6b",
+                    paddingLeft: "8px",
+                    marginBottom: "8px",
+                    color: "#003a6b",
+                    fontWeight: "bold",
+                    fontSize: "12px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  GIÁO VIÊN
+                </div>
+                <div
+                  style={{
+                    backgroundColor: "#f9fbfd",
+                    padding: "10px",
+                    borderRadius: "6px",
+                    height: "100%", // Fill height
+                  }}
+                >
+                  <div style={{ marginBottom: "6px" }}>
+                    <div style={{ color: "#666", fontSize: "11px" }}>Họ và tên</div>
+                    <strong style={{ color: "#333", fontSize: "13px", display: 'block' }}>{currentData.teacherName}</strong>
+                  </div>
+                  <div style={{ marginBottom: "6px" }}>
+                    <div style={{ color: "#666", fontSize: "11px" }}>Môn chính</div>
+                    <strong style={{ color: "#333", fontSize: "12px" }}>{currentData.subjects.join(", ")}</strong>
+                  </div>
+                  <div>
+                    <span style={{ color: "#666", fontSize: "11px" }}>Số buổi: </span>
+                    <strong style={{ color: "#333", fontSize: "12px" }}>{currentData.totalSessions}</strong>
+                  </div>
+                </div>
+              </div>
+
+              {/* Bank Info & Total - Increased Width (70%) */}
+              <div style={{ flex: "0.7" }}>
+                <div
+                  style={{
+                    borderLeft: "3px solid #003a6b",
+                    paddingLeft: "8px",
+                    marginBottom: "8px",
+                    color: "#003a6b",
+                    fontWeight: "bold",
+                    fontSize: "12px",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  THANH TOÁN
+                </div>
+                <div
+                  style={{
+                    backgroundColor: "#f9fbfd",
+                    padding: "10px",
+                    borderRadius: "6px",
+                    display: "flex",
+                    flexDirection: "column",
+                    justifyContent: "center",
+                    height: "100%"
+                  }}
+                >
+                  {/* Hàng thông tin bank rút gọn */}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: "4px", borderBottom: "1px dashed #eee", paddingBottom: "4px" }}>
+                    <span style={{ color: "#666" }}>Ngân hàng/STK:</span>
+                    <strong style={{ color: "#333" }}>---</strong>
+                  </div>
+
+                  {/* Tổng lương to rõ */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginTop: "auto" }}>
+                    <span style={{ color: "#666", fontWeight: 600 }}>THỰC NHẬN:</span>
+                    <strong style={{ color: "#d32f2f", fontSize: "20px" }}>
+                      {formatVND(currentData.totalSalary)}
+                    </strong>
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className="col-span-1 p-2 border">Ca dạy</div>
-            <div className="col-span-1 p-2 border">Lương</div>
 
-            <div className="p-2 font-bold text-center">TH</div>
-            <div className="p-2 text-center">{data.caTH}</div>
-            <div className="p-2 text-center">{data.luongTH}</div>
+            {/* Salary Table */}
+            <table
+              style={{
+                width: "100%",
+                borderCollapse: "collapse",
+                borderRadius: "6px 6px 0 0",
+                overflow: "hidden",
+                fontSize: "12px",
+                border: "1px solid #eee"
+              }}
+            >
+              <thead>
+                <tr style={{ backgroundColor: "#003a6b", color: "white" }}>
+                  <th style={{ padding: "8px 10px", textAlign: "left", fontWeight: 600, width: "45%" }}>LỚP HỌC</th>
+                  <th style={{ padding: "8px 10px", textAlign: "center", fontWeight: 600 }}>SỐ BUỔI</th>
+                  <th style={{ padding: "8px 10px", textAlign: "right", fontWeight: 600 }}>THÀNH TIỀN</th>
+                </tr>
+              </thead>
+              <tbody>
+                {currentData.details.map((detail, index) => (
+                  <tr key={index} style={{ borderBottom: "1px solid #eee" }}>
+                    <td style={{ padding: "8px 10px", color: "#333", borderRight: "1px solid #eee" }}>
+                      <div style={{ fontWeight: 600 }}>{detail.className}</div>
+                    </td>
+                    <td
+                      style={{
+                        padding: "8px 10px",
+                        textAlign: "center",
+                        color: "#333",
+                        borderRight: "1px solid #eee",
+                      }}
+                    >
+                      {detail.sessionCount}
+                    </td>
+                    <td
+                      style={{
+                        padding: "8px 10px",
+                        textAlign: "right",
+                        fontWeight: 500,
+                        color: "#333",
+                      }}
+                    >
+                      {formatVND(detail.totalSalary)}
+                    </td>
+                  </tr>
+                ))}
 
-            <div className="p-2 font-bold text-center">THCS</div>
-            <div className="p-2 text-center">{data.caTHCS}</div>
-            <div className="p-2 text-center">{data.luongTHCS}</div>
+                {/* Tổng cộng Row */}
+                <tr style={{ backgroundColor: "#f0f7ff", fontWeight: "bold", borderTop: "2px solid #003a6b" }}>
+                  <td style={{ padding: "8px 10px", textAlign: "right", color: "#003a6b" }}>TỔNG</td>
+                  <td style={{ padding: "8px 10px", textAlign: "center", color: "#003a6b" }}>
+                    {currentData.totalSessions}
+                  </td>
+                  <td
+                    style={{
+                      padding: "8px 10px",
+                      textAlign: "right",
+                      color: "#003a6b",
+                      fontSize: "14px",
+                    }}
+                  >
+                    {formatVND(currentData.totalSalary)}
+                  </td>
+                </tr>
+              </tbody>
+            </table>
 
-            <div className="p-2 font-bold text-center">THPT</div>
-            <div className="p-2 text-center">{data.caTHPT}</div>
-            <div className="p-2 text-center">{data.luongTHPT}</div>
-
-            <div className="col-span-2 p-2 font-semibold">TỔNG LƯƠNG</div>
-            <div className="p-2 font-bold text-center">{data.tongLuong}</div>
-          </div>
-
-          <div className="mt-4">
-            <Text style={{ fontSize: 14, color: "#666" }}>
-              Ghi chú: {data.note}
-            </Text>
-          </div>
-          <div className="mt-2">
-            <Text style={{ fontSize: 14, fontWeight: "500" }}>
-              Thầy Cô kiểm tra kỹ thông tin và tiền lương. Nếu có sai sót báo
-              lại với Trung Tâm
-            </Text>
+            {/* Footer Note */}
+            <div
+              style={{
+                marginTop: "15px",
+                fontSize: "11px",
+                color: "#888",
+                fontStyle: "italic",
+                borderTop: "1px solid #eee",
+                paddingTop: "8px",
+                textAlign: "center"
+              }}
+            >
+              Vui lòng kiểm tra và báo lại sai sót (nếu có) trong vòng 3 ngày.
+            </div>
           </div>
         </div>
       </div>

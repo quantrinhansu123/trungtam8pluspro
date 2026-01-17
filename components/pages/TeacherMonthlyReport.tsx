@@ -17,6 +17,8 @@ import {
   Collapse,
   Statistic,
   Switch,
+  Modal,
+  Input,
 } from "antd";
 import {
   RobotOutlined,
@@ -91,6 +93,11 @@ const TeacherMonthlyReport = () => {
   // Modal state
   const [editModalOpen, setEditModalOpen] = useState(false);
   const [selectedStudent, setSelectedStudent] = useState<StudentReportRow | null>(null);
+
+  // Edit scores modal state
+  const [editScoresModalOpen, setEditScoresModalOpen] = useState(false);
+  const [editingScoresStudent, setEditingScoresStudent] = useState<StudentReportRow | null>(null);
+  const [editingScores, setEditingScores] = useState<{ [sessionId: string]: number | null }>({});
 
   // Kiểm tra xem tháng đã kết thúc chưa (bỏ qua nếu đang ở chế độ test)
   const isMonthEnded = useMemo(() => {
@@ -401,7 +408,7 @@ const TeacherMonthlyReport = () => {
 
         try {
           const comment = await generateStudentComment(reportDataForAI);
-          
+
           setReportData((prev) =>
             prev.map((r) =>
               r.studentId === row.studentId ? { ...r, aiComment: comment } : r
@@ -476,11 +483,11 @@ const TeacherMonthlyReport = () => {
     setReportData((prev) =>
       prev.map((r) =>
         r.studentId === selectedStudent.studentId
-          ? { 
-              ...r, 
-              classStats: updatedClassStats,
-              finalComment: combinedComment 
-            }
+          ? {
+            ...r,
+            classStats: updatedClassStats,
+            finalComment: combinedComment
+          }
           : r
       )
     );
@@ -549,11 +556,11 @@ const TeacherMonthlyReport = () => {
           r.studentId === studentId ? { ...r, aiComment: comment } : r
         )
       );
-      
+
       if (selectedStudent?.studentId === studentId) {
         setSelectedStudent((prev) => prev ? { ...prev, aiComment: comment } : null);
       }
-      
+
       message.success("Đã tạo nhận xét AI!");
     } catch (error) {
       console.error("Error generating AI comment:", error);
@@ -694,6 +701,80 @@ const TeacherMonthlyReport = () => {
     }
   };
 
+  // Open edit scores modal
+  const handleOpenEditScores = (record: StudentReportRow) => {
+    setEditingScoresStudent(record);
+
+    // Load current scores from sessions
+    const monthStr = selectedMonth.format("YYYY-MM");
+    const scoresMap: { [sessionId: string]: number | null } = {};
+
+    record.classIds.forEach((classId) => {
+      const classSessions = sessions.filter((s) => {
+        const sessionMonth = dayjs(s["Ngày"]).format("YYYY-MM");
+        return s["Class ID"] === classId && sessionMonth === monthStr;
+      });
+
+      classSessions.forEach((session) => {
+        const attendanceRecord = session["Điểm danh"]?.find((r) => r["Student ID"] === record.studentId);
+        if (attendanceRecord) {
+          scoresMap[session.id] = attendanceRecord["Điểm"] ?? null;
+        }
+      });
+    });
+
+    setEditingScores(scoresMap);
+    setEditScoresModalOpen(true);
+  };
+
+  // Handle score change in modal
+  const handleScoreChange = (sessionId: string, value: number | null) => {
+    setEditingScores(prev => ({
+      ...prev,
+      [sessionId]: value
+    }));
+  };
+
+  // Save edited scores to Firebase
+  const handleSaveScores = async () => {
+    if (!editingScoresStudent) return;
+
+    setSaving(true);
+    try {
+      const updates: { [key: string]: any } = {};
+
+      // Update each session's attendance record
+      for (const [sessionId, newScore] of Object.entries(editingScores)) {
+        const session = sessions.find(s => s.id === sessionId);
+        if (!session) continue;
+
+        const attendanceRecords = session["Điểm danh"] || [];
+        const recordIndex = attendanceRecords.findIndex((r: any) => r["Student ID"] === editingScoresStudent.studentId);
+
+        if (recordIndex !== -1) {
+          // Update the score in the attendance record
+          updates[`datasheet/Điểm_danh_sessions/${sessionId}/Điểm danh/${recordIndex}/Điểm`] = newScore;
+        }
+      }
+
+      // Apply all updates
+      if (Object.keys(updates).length > 0) {
+        await update(ref(database), updates);
+        message.success("Đã cập nhật điểm thành công!");
+        setEditScoresModalOpen(false);
+        setEditingScoresStudent(null);
+        setEditingScores({});
+      } else {
+        message.warning("Không có thay đổi nào để lưu");
+      }
+    } catch (error) {
+      console.error("Error saving scores:", error);
+      message.error("Có lỗi khi lưu điểm");
+    } finally {
+      setSaving(false);
+    }
+  };
+
   // Submit single student report
   const handleSubmitSingle = async (studentId: string) => {
     if (!isMonthEnded) {
@@ -799,10 +880,10 @@ const TeacherMonthlyReport = () => {
               Mã HS: {record.studentCode}
             </Text>
           )}
-          
+
           {/* Dropdown các lớp ngay dưới tên */}
-          <Collapse 
-            ghost 
+          <Collapse
+            ghost
             size="small"
             expandIcon={({ isActive }) => <DownOutlined rotate={isActive ? 180 : 0} style={{ fontSize: 10 }} />}
           >
@@ -819,10 +900,10 @@ const TeacherMonthlyReport = () => {
               style={{ padding: 0 }}
             >
               {record.classStats.map((cs, idx) => (
-                <div 
-                  key={idx} 
-                  style={{ 
-                    padding: '8px 12px', 
+                <div
+                  key={idx}
+                  style={{
+                    padding: '8px 12px',
                     background: idx % 2 === 0 ? '#fafafa' : '#fff',
                     borderRadius: 4,
                     marginBottom: 4
@@ -865,7 +946,7 @@ const TeacherMonthlyReport = () => {
         <div style={{ textAlign: 'center' }}>
           <Row gutter={[8, 8]}>
             <Col span={12}>
-              <Statistic 
+              <Statistic
                 title={<span style={{ fontSize: 10 }}>Buổi học</span>}
                 value={record.presentSessions}
                 suffix={`/${record.totalSessions}`}
@@ -873,13 +954,13 @@ const TeacherMonthlyReport = () => {
               />
             </Col>
             <Col span={12}>
-              <Statistic 
+              <Statistic
                 title={<span style={{ fontSize: 10 }}>Chuyên cần</span>}
                 value={record.attendanceRate}
                 suffix="%"
-                valueStyle={{ 
-                  fontSize: 14, 
-                  color: record.attendanceRate >= 80 ? '#52c41a' : '#ff4d4f' 
+                valueStyle={{
+                  fontSize: 14,
+                  color: record.attendanceRate >= 80 ? '#52c41a' : '#ff4d4f'
                 }}
               />
             </Col>
@@ -910,13 +991,24 @@ const TeacherMonthlyReport = () => {
         // Kiểm tra xem có nhận xét cho ít nhất 1 lớp không
         const hasClassComment = record.classStats.some(cs => cs.comment && cs.comment.trim());
         const hasAnyComment = hasClassComment || record.finalComment || record.aiComment;
-        
+
         return (
           <Space direction="vertical" size={4}>
+            <Tooltip title="Xem và sửa điểm các buổi học">
+              <Button
+                size="small"
+                icon={<EditOutlined />}
+                onClick={() => handleOpenEditScores(record)}
+                block
+                style={{ borderColor: '#1890ff', color: '#1890ff' }}
+              >
+                Sửa điểm
+              </Button>
+            </Tooltip>
             <Tooltip title={
               cannotEdit ? "Chỉ có thể tạo báo cáo cho tháng đã kết thúc" :
-              isLocked ? "Không thể sửa (đã gửi/duyệt)" : 
-              "Xem & chỉnh sửa nhận xét theo môn"
+                isLocked ? "Không thể sửa (đã gửi/duyệt)" :
+                  "Xem & chỉnh sửa nhận xét theo môn"
             }>
               <Button
                 type="primary"
@@ -958,9 +1050,9 @@ const TeacherMonthlyReport = () => {
                     icon={<SendOutlined />}
                     disabled={cannotEdit}
                     loading={saving}
-                    style={{ 
-                      borderColor: '#52c41a', 
-                      color: '#52c41a' 
+                    style={{
+                      borderColor: '#52c41a',
+                      color: '#52c41a'
                     }}
                     block
                   >
@@ -987,10 +1079,10 @@ const TeacherMonthlyReport = () => {
             message={
               <Space>
                 <span>Chế độ Test (DEV):</span>
-                <Switch 
-                  checked={testMode} 
+                <Switch
+                  checked={testMode}
                   onChange={setTestMode}
-                  checkedChildren="BẬT" 
+                  checkedChildren="BẬT"
                   unCheckedChildren="TẮT"
                 />
                 {testMode && <Tag color="orange">Đang bỏ qua giới hạn tháng!</Tag>}
@@ -1165,6 +1257,163 @@ const TeacherMonthlyReport = () => {
           classStats={selectedStudent.classStats}
         />
       )}
+
+      {/* Edit Scores Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <EditOutlined style={{ color: '#1890ff' }} />
+            <span>Sửa điểm - {editingScoresStudent?.studentName}</span>
+          </div>
+        }
+        open={editScoresModalOpen}
+        onCancel={() => {
+          setEditScoresModalOpen(false);
+          setEditingScoresStudent(null);
+          setEditingScores({});
+        }}
+        width={900}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setEditScoresModalOpen(false);
+              setEditingScoresStudent(null);
+              setEditingScores({});
+            }}
+          >
+            Hủy
+          </Button>,
+          <Button
+            key="save"
+            type="primary"
+            icon={<SaveOutlined />}
+            onClick={handleSaveScores}
+            loading={saving}
+          >
+            Lưu thay đổi
+          </Button>,
+        ]}
+      >
+        {editingScoresStudent && (
+          <div>
+            <Alert
+              message="Lưu ý"
+              description="Thay đổi điểm ở đây sẽ tự động cập nhật vào phần Điểm danh. Điểm trung bình sẽ được tính lại tự động."
+              type="info"
+              showIcon
+              style={{ marginBottom: 16 }}
+            />
+
+            {editingScoresStudent.classIds.map((classId, classIndex) => {
+              const monthStr = selectedMonth.format("YYYY-MM");
+              const classSessions = sessions
+                .filter((s) => {
+                  const sessionMonth = dayjs(s["Ngày"]).format("YYYY-MM");
+                  return s["Class ID"] === classId && sessionMonth === monthStr;
+                })
+                .sort((a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime());
+
+              const className = editingScoresStudent.classNames[classIndex];
+              const classStats = editingScoresStudent.classStats.find(cs => cs.classId === classId);
+
+              return (
+                <div key={classId} style={{ marginBottom: 24 }}>
+                  <div
+                    style={{
+                      background: '#f0f5ff',
+                      padding: '12px 16px',
+                      borderRadius: 8,
+                      marginBottom: 12,
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      alignItems: 'center'
+                    }}
+                  >
+                    <div>
+                      <Tag color="blue" style={{ fontSize: 14 }}>{className}</Tag>
+                      {classStats?.subject && <Tag color="cyan">{classStats.subject}</Tag>}
+                    </div>
+                    <Text type="secondary">
+                      Điểm TB hiện tại: <Text strong style={{ color: '#722ed1' }}>
+                        {classStats?.averageScore ? classStats.averageScore.toFixed(1) : '-'}
+                      </Text>
+                    </Text>
+                  </div>
+
+                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                    <thead>
+                      <tr style={{ background: '#fafafa' }}>
+                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '100px' }}>Ngày</th>
+                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '100px' }}>Chuyên cần</th>
+                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '120px' }}>Điểm hiện tại</th>
+                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '150px' }}>Điểm mới</th>
+                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'left' }}>Ghi chú</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {classSessions.map((session) => {
+                        const attendanceRecord = session["Điểm danh"]?.find(
+                          (r: any) => r["Student ID"] === editingScoresStudent.studentId
+                        );
+
+                        if (!attendanceRecord) return null;
+
+                        const currentScore = attendanceRecord["Điểm"] ?? null;
+                        const attendance = attendanceRecord["Có mặt"]
+                          ? attendanceRecord["Đi muộn"] ? "Đi muộn" : "Có mặt"
+                          : attendanceRecord["Vắng có phép"] ? "Vắng có phép" : "Vắng";
+                        const attendanceColor = attendanceRecord["Có mặt"]
+                          ? attendanceRecord["Đi muộn"] ? "#fa8c16" : "#52c41a"
+                          : attendanceRecord["Vắng có phép"] ? "#1890ff" : "#ff4d4f";
+
+                        return (
+                          <tr key={session.id}>
+                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
+                              {dayjs(session["Ngày"]).format("DD/MM/YYYY")}
+                            </td>
+                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
+                              <Tag color={attendanceColor} style={{ margin: 0 }}>{attendance}</Tag>
+                            </td>
+                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
+                              <Text strong style={{ fontSize: 14 }}>
+                                {currentScore !== null ? currentScore : '-'}
+                              </Text>
+                            </td>
+                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
+                              <Input
+                                type="number"
+                                min={0}
+                                max={10}
+                                step={0.5}
+                                value={editingScores[session.id] ?? ''}
+                                onChange={(e) => {
+                                  const value = e.target.value;
+                                  handleScoreChange(
+                                    session.id,
+                                    value === '' ? null : parseFloat(value)
+                                  );
+                                }}
+                                placeholder="Nhập điểm"
+                                style={{ width: '100%' }}
+                              />
+                            </td>
+                            <td style={{ border: '1px solid #d9d9d9', padding: '8px' }}>
+                              <Text type="secondary" style={{ fontSize: 12 }}>
+                                {attendanceRecord["Ghi chú"] || '-'}
+                              </Text>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </Modal>
     </WrapperContent>
   );
 };

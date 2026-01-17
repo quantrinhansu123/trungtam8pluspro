@@ -67,6 +67,15 @@ const AdminMonthlyReportReview = () => {
   const [printModalOpen, setPrintModalOpen] = useState(false);
   const [selectedComment, setSelectedComment] = useState<MonthlyComment | null>(null);
 
+  // Preview modal
+  const [previewModalOpen, setPreviewModalOpen] = useState(false);
+  const [previewComment, setPreviewComment] = useState<MonthlyComment | null>(null);
+
+  // Reject modal
+  const [rejectModalOpen, setRejectModalOpen] = useState(false);
+  const [rejectComment, setRejectComment] = useState<MonthlyComment | null>(null);
+  const [rejectReason, setRejectReason] = useState("");
+
   // Load classes
   useEffect(() => {
     const classesRef = ref(database, "datasheet/Lớp_học");
@@ -143,11 +152,11 @@ const AdminMonthlyReportReview = () => {
 
     // MERGE: Gộp các báo cáo của cùng 1 học sinh trong cùng 1 tháng
     const studentReportMap = new Map<string, MonthlyComment>();
-    
+
     filtered.forEach((comment) => {
       const key = `${comment.studentId}_${comment.month}`;
       const existing = studentReportMap.get(key);
-      
+
       if (!existing) {
         // Clone comment để không modify original
         studentReportMap.set(key, {
@@ -187,14 +196,14 @@ const AdminMonthlyReportReview = () => {
           attendanceRate: 0, // Will recalculate
           averageScore: 0, // Will recalculate
         };
-        
+
         // Recalculate averages
         const totalSessions = existing.stats.totalSessions || 0;
         const presentSessions = existing.stats.presentSessions || 0;
-        existing.stats.attendanceRate = totalSessions > 0 
-          ? Math.round((presentSessions / totalSessions) * 100) 
+        existing.stats.attendanceRate = totalSessions > 0
+          ? Math.round((presentSessions / totalSessions) * 100)
           : 0;
-        
+
         // Average score from all class stats
         const allClassStats = existing.stats.classStats || [];
         if (allClassStats.length > 0) {
@@ -204,11 +213,11 @@ const AdminMonthlyReportReview = () => {
 
         // Merge comments
         if (comment.finalComment && !existing.finalComment.includes(comment.finalComment)) {
-          existing.finalComment = existing.finalComment 
+          existing.finalComment = existing.finalComment
             ? `${existing.finalComment}\n\n---\n\n${comment.finalComment}`
             : comment.finalComment;
         }
-        
+
         // Keep most recent status - if any is 'submitted', keep submitted
         if (comment.status === 'submitted' || existing.status === 'submitted') {
           existing.status = 'submitted';
@@ -240,7 +249,7 @@ const AdminMonthlyReportReview = () => {
   const stats = useMemo(() => {
     const monthStr = selectedMonth.format("YYYY-MM");
     const monthComments = allComments.filter((c) => c.month === monthStr);
-    
+
     // Merge theo student để đếm đúng
     const studentMap = new Map<string, { status: string }>();
     monthComments.forEach((c) => {
@@ -256,7 +265,7 @@ const AdminMonthlyReportReview = () => {
         }
       }
     });
-    
+
     const merged = Array.from(studentMap.values());
     return {
       total: merged.length,
@@ -280,17 +289,35 @@ const AdminMonthlyReportReview = () => {
     }
   };
 
-  // Reject single comment
-  const handleRejectSingle = async (comment: MonthlyComment) => {
+  // Open reject modal
+  const openRejectModal = (comment: MonthlyComment) => {
+    setRejectComment(comment);
+    setRejectReason("");
+    setRejectModalOpen(true);
+  };
+
+  // Reject single comment with reason
+  const handleRejectSingle = async () => {
+    if (!rejectComment) return;
+
+    if (!rejectReason.trim()) {
+      message.warning("Vui lòng nhập lý do từ chối");
+      return;
+    }
+
     try {
-      await update(ref(database, `datasheet/Nhận_xét_tháng/${comment.id}`), {
+      await update(ref(database, `datasheet/Nhận_xét_tháng/${rejectComment.id}`), {
         status: "draft",
         rejectedAt: new Date().toISOString(),
         rejectedBy: userProfile?.email || "",
+        rejectedReason: rejectReason,
         submittedAt: null,
         submittedBy: null,
       });
       message.success("Đã từ chối! Giáo viên có thể chỉnh sửa lại.");
+      setRejectModalOpen(false);
+      setRejectComment(null);
+      setRejectReason("");
     } catch (error) {
       console.error("Error rejecting:", error);
       message.error("Có lỗi khi từ chối");
@@ -327,11 +354,17 @@ const AdminMonthlyReportReview = () => {
     setPrintModalOpen(true);
   };
 
+  // Preview
+  const handlePreview = (comment: MonthlyComment) => {
+    setPreviewComment(comment);
+    setPreviewModalOpen(true);
+  };
+
   // Generate print content - với LỊCH SỬ HỌC TẬP CHI TIẾT giống ảnh mẫu
   const generatePrintContent = (comment: MonthlyComment) => {
     const monthDisplay = dayjs(comment.month).format("MM/YYYY");
     const monthStr = comment.month;
-    
+
     const studentInfo = students.find((s) => s.id === comment.studentId);
     const classIds = comment.classIds || [];
     const classStats = comment.stats?.classStats || [];
@@ -352,7 +385,7 @@ const AdminMonthlyReportReview = () => {
     let scoreTablesHTML = "";
     classStats.forEach((cs: ClassStats) => {
       const classSessions = allStudentSessions.filter((s) => s["Class ID"] === cs.classId);
-      
+
       let tableRows = "";
       classSessions.forEach((session) => {
         const record = session["Điểm danh"]?.find((r) => r["Student ID"] === comment.studentId);
@@ -760,10 +793,10 @@ const AdminMonthlyReportReview = () => {
                 Mã HS: {record.studentCode}
               </Text>
             )}
-            
+
             {/* Dropdown các lớp ngay dưới tên */}
-            <Collapse 
-              ghost 
+            <Collapse
+              ghost
               size="small"
               expandIcon={({ isActive }) => <DownOutlined rotate={isActive ? 180 : 0} style={{ fontSize: 10 }} />}
             >
@@ -781,10 +814,10 @@ const AdminMonthlyReportReview = () => {
               >
                 {classStats.length > 0 ? (
                   classStats.map((cs: ClassStats, idx: number) => (
-                    <div 
-                      key={idx} 
-                      style={{ 
-                        padding: '8px 12px', 
+                    <div
+                      key={idx}
+                      style={{
+                        padding: '8px 12px',
                         background: idx % 2 === 0 ? '#fafafa' : '#fff',
                         borderRadius: 4,
                         marginBottom: 4
@@ -835,7 +868,7 @@ const AdminMonthlyReportReview = () => {
         <div style={{ textAlign: 'center' }}>
           <Row gutter={[8, 8]}>
             <Col span={12}>
-              <Statistic 
+              <Statistic
                 title={<span style={{ fontSize: 10 }}>Buổi học</span>}
                 value={record.stats?.presentSessions || 0}
                 suffix={`/${record.stats?.totalSessions || 0}`}
@@ -843,13 +876,13 @@ const AdminMonthlyReportReview = () => {
               />
             </Col>
             <Col span={12}>
-              <Statistic 
+              <Statistic
                 title={<span style={{ fontSize: 10 }}>Chuyên cần</span>}
                 value={record.stats?.attendanceRate || 0}
                 suffix="%"
-                valueStyle={{ 
-                  fontSize: 14, 
-                  color: (record.stats?.attendanceRate || 0) >= 80 ? '#52c41a' : '#ff4d4f' 
+                valueStyle={{
+                  fontSize: 14,
+                  color: (record.stats?.attendanceRate || 0) >= 80 ? '#52c41a' : '#ff4d4f'
                 }}
               />
             </Col>
@@ -891,6 +924,13 @@ const AdminMonthlyReportReview = () => {
         <Space wrap>
           <Button
             size="small"
+            icon={<EyeOutlined />}
+            onClick={() => handlePreview(record)}
+          >
+            Xem trước
+          </Button>
+          <Button
+            size="small"
             icon={<PrinterOutlined />}
             onClick={() => handlePrint(record)}
           >
@@ -900,6 +940,7 @@ const AdminMonthlyReportReview = () => {
             <>
               <Popconfirm
                 title="Duyệt báo cáo này?"
+                description="Bạn đã xem trước báo cáo chưa?"
                 onConfirm={() => handleApproveSingle(record)}
                 okText="Duyệt"
                 cancelText="Hủy"
@@ -908,18 +949,14 @@ const AdminMonthlyReportReview = () => {
                   Duyệt
                 </Button>
               </Popconfirm>
-              <Popconfirm
-                title="Từ chối báo cáo này?"
-                description="Giáo viên sẽ có thể chỉnh sửa lại."
-                onConfirm={() => handleRejectSingle(record)}
-                okText="Từ chối"
-                cancelText="Hủy"
-                okButtonProps={{ danger: true }}
+              <Button
+                size="small"
+                danger
+                icon={<CloseOutlined />}
+                onClick={() => openRejectModal(record)}
               >
-                <Button size="small" danger icon={<CloseOutlined />}>
-                  Từ chối
-                </Button>
-              </Popconfirm>
+                Từ chối
+              </Button>
             </>
           )}
         </Space>
@@ -1089,6 +1126,139 @@ const AdminMonthlyReportReview = () => {
           scroll={{ x: 1200 }}
         />
       </Card>
+
+      {/* Preview Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <EyeOutlined style={{ color: '#1890ff' }} />
+            <span>Xem trước báo cáo - {previewComment?.studentName}</span>
+          </div>
+        }
+        open={previewModalOpen}
+        onCancel={() => setPreviewModalOpen(false)}
+        width={900}
+        footer={[
+          <Button key="cancel" onClick={() => setPreviewModalOpen(false)}>
+            Đóng
+          </Button>,
+          previewComment?.status === "submitted" && (
+            <>
+              <Button
+                key="reject"
+                danger
+                icon={<CloseOutlined />}
+                onClick={() => {
+                  setPreviewModalOpen(false);
+                  openRejectModal(previewComment);
+                }}
+              >
+                Từ chối
+              </Button>
+              <Button
+                key="approve"
+                type="primary"
+                icon={<CheckOutlined />}
+                onClick={() => {
+                  handleApproveSingle(previewComment);
+                  setPreviewModalOpen(false);
+                }}
+              >
+                Duyệt báo cáo
+              </Button>
+            </>
+          ),
+        ]}
+      >
+        {previewComment && (
+          <div
+            style={{
+              maxHeight: 600,
+              overflow: "auto",
+              border: "1px solid #d9d9d9",
+              borderRadius: 8,
+              padding: 16,
+            }}
+            dangerouslySetInnerHTML={{
+              __html: generatePrintContent(previewComment),
+            }}
+          />
+        )}
+      </Modal>
+
+      {/* Reject Modal */}
+      <Modal
+        title={
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <CloseOutlined style={{ color: '#ff4d4f' }} />
+            <span>Từ chối báo cáo - {rejectComment?.studentName}</span>
+          </div>
+        }
+        open={rejectModalOpen}
+        onCancel={() => {
+          setRejectModalOpen(false);
+          setRejectComment(null);
+          setRejectReason("");
+        }}
+        width={600}
+        footer={[
+          <Button
+            key="cancel"
+            onClick={() => {
+              setRejectModalOpen(false);
+              setRejectComment(null);
+              setRejectReason("");
+            }}
+          >
+            Hủy
+          </Button>,
+          <Button
+            key="reject"
+            type="primary"
+            danger
+            icon={<CloseOutlined />}
+            onClick={handleRejectSingle}
+          >
+            Xác nhận từ chối
+          </Button>,
+        ]}
+      >
+        <div style={{ marginBottom: 16 }}>
+          <Text type="secondary">
+            Báo cáo sẽ được chuyển về trạng thái nháp và giáo viên có thể chỉnh sửa lại.
+          </Text>
+        </div>
+
+        <div style={{ marginBottom: 8 }}>
+          <Text strong style={{ color: '#ff4d4f' }}>Lý do từ chối: <span style={{ color: '#ff4d4f' }}>*</span></Text>
+        </div>
+        <Input.TextArea
+          rows={4}
+          placeholder="Vui lòng nhập lý do từ chối báo cáo (ví dụ: Nhận xét chưa đầy đủ, thiếu thông tin điểm số, v.v.)"
+          value={rejectReason}
+          onChange={(e) => setRejectReason(e.target.value)}
+          maxLength={500}
+          showCount
+        />
+
+        {rejectComment && (
+          <div style={{ marginTop: 16, padding: 12, background: '#f5f5f5', borderRadius: 4 }}>
+            <Text strong>Thông tin báo cáo:</Text>
+            <div style={{ marginTop: 8 }}>
+              <Text type="secondary">Học sinh: </Text>
+              <Text>{rejectComment.studentName}</Text>
+            </div>
+            <div>
+              <Text type="secondary">Giáo viên: </Text>
+              <Text>{rejectComment.teacherName}</Text>
+            </div>
+            <div>
+              <Text type="secondary">Tháng: </Text>
+              <Text>{dayjs(rejectComment.month).format("MM/YYYY")}</Text>
+            </div>
+          </div>
+        )}
+      </Modal>
 
       {/* Print Preview Modal */}
       <Modal

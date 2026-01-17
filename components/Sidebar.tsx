@@ -13,6 +13,7 @@ import {
   IconCurrencyDollar,
   IconFileReport,
   IconChecklist,
+  IconUserCheck,
 } from "@tabler/icons-react";
 import * as React from "react";
 import { NavDocuments } from "@/components/NavDocument";
@@ -68,6 +69,12 @@ const data = {
       title: "Điểm danh",
       url: "/workspace/attendance",
       icon: IconListDetails,
+    },
+    {
+      title: "Chấm công",
+      url: "/workspace/staff-attendance",
+      icon: IconUserCheck,
+      adminOnly: true,
     },
     {
       title: "Quản lý lớp học",

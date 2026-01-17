@@ -13,8 +13,10 @@ import ClassSessionHistory from "@/components/pages/ClassSessionHistory";
 import TeacherSchedule from "@/components/pages/TeacherSchedule";
 import AdminSchedule from "@/components/pages/AdminSchedule";
 import StudentReportPage from "@/components/pages/StudentReportPage";
+import StudentProfilePage from "@/components/pages/StudentProfilePage";
 import TeacherMonthlyReport from "@/components/pages/TeacherMonthlyReport";
 import AdminMonthlyReportReview from "@/components/pages/AdminMonthlyReportReview";
+import StaffAttendance from "@/components/pages/StaffAttendance";
 import AdminLayout from "@/layouts/AdminLayout";
 import Authoriation from "@/routes/Authoriation";
 import { Empty } from "antd/lib";
@@ -59,6 +61,14 @@ const privateRoutes = [
       {
         path: "attendance",
         element: <TeacherAttendance />,
+      },
+      {
+        path: "staff-attendance",
+        element: (
+          <Authoriation>
+            <StaffAttendance />
+          </Authoriation>
+        ),
       },
       {
         path: "attendance/session/:classId",
@@ -111,6 +121,10 @@ const privateRoutes = [
       {
         path: "students/:studentId/report",
         element: <StudentReportPage />,
+      },
+      {
+        path: "students/:studentId/profile",
+        element: <StudentProfilePage />,
       },
       {
         path: "monthly-report",

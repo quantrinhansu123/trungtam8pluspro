@@ -579,10 +579,12 @@ const InvoicePage = () => {
 
         const classId = session["Class ID"];
         const classInfo = classes.find((c) => c.id === classId);
+        // Lấy Lương GV - ưu tiên từ session, fallback về class, cuối cùng là teacher
+        // Ưu tiên: Session > Class > Teacher
         const salaryPerSession =
-          parseCurrency(classInfo?.["Lương GV"]) ||
-          parseCurrency(session["Lương GV"]) ||
-          parseCurrency(teacher["Lương theo buổi"]);
+          parseCurrency(session["Lương GV"]) ||          // 1. Từ Session (ưu tiên)
+          parseCurrency(classInfo?.["Lương GV"]) ||       // 2. Từ Lớp học (fallback)
+          parseCurrency(teacher["Lương theo buổi"]);     // 3. Từ Giáo viên (fallback cuối)
 
         if (!salariesMap[key]) {
           // Normalize status - handle both direct value and nested object
@@ -1300,7 +1302,7 @@ const InvoicePage = () => {
     const getLatestInvoiceData = () => {
       const latestInvoiceData = studentInvoiceStatus[invoice.id];
       let updatedInvoice = { ...currentInvoiceData };
-      
+
       // Merge with latest data if available
       if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
         updatedInvoice = {
@@ -1320,13 +1322,13 @@ const InvoicePage = () => {
     const refreshModal = () => {
       currentInvoiceData = getLatestInvoiceData();
       const freshContent = generateStudentInvoiceHTML(currentInvoiceData, currentIncludeQR);
-      
+
       // Update modal content
       const modalElement = document.getElementById(`student-invoice-${invoice.id}`);
       if (modalElement) {
         modalElement.innerHTML = freshContent;
       }
-      
+
       // Update modal title
       if (modal) {
         modal.update({
@@ -1344,17 +1346,17 @@ const InvoicePage = () => {
       if (event.data.type === 'SAVE_INVOICE_DATA') {
         const updatedData = event.data.data;
         console.log('Received invoice data update:', updatedData);
-        
+
         // Update Firebase with the changes
         updateInvoiceFromEditableForm(updatedData);
-        
+
         // Update current invoice data
         currentInvoiceData = {
           ...currentInvoiceData,
           studentName: updatedData.studentName || currentInvoiceData.studentName,
           studentCode: updatedData.studentCode || currentInvoiceData.studentCode
         };
-        
+
         // Refresh modal with new data after a short delay to allow Firebase update
         setTimeout(() => {
           refreshModal();
@@ -1428,24 +1430,24 @@ const InvoicePage = () => {
   const updateInvoiceFromEditableForm = async (updatedData: any) => {
     try {
       const invoiceRef = ref(database, `datasheet/Phiếu_thu_học_phí/${updatedData.id}`);
-      
+
       // Get current data first
       const currentData = studentInvoiceStatus[updatedData.id];
       if (typeof currentData === "object" && currentData !== null) {
         // Update only the changed fields
         const updateFields: any = {};
-        
+
         if (updatedData.studentName !== currentData.studentName) {
           updateFields.studentName = updatedData.studentName;
         }
         if (updatedData.studentCode !== currentData.studentCode) {
           updateFields.studentCode = updatedData.studentCode;
         }
-        
+
         if (Object.keys(updateFields).length > 0) {
           await update(invoiceRef, updateFields);
           message.success('Đã lưu thay đổi tự động');
-          
+
           // Update local state immediately so print function uses new data
           setStudentInvoiceStatus(prev => ({
             ...prev,
@@ -1454,7 +1456,7 @@ const InvoicePage = () => {
               ...updateFields
             }
           }));
-          
+
           // Refresh the invoice list
           setRefreshTrigger(prev => prev + 1);
         }
@@ -1515,7 +1517,7 @@ const InvoicePage = () => {
   // Calculate total accumulated debt for a student across all previous months
   const calculateStudentTotalDebt = (studentId: string, currentMonth: number, currentYear: number): number => {
     let totalDebt = 0;
-    
+
     // Check persisted invoices from Firebase
     Object.entries(studentInvoiceStatus).forEach(([key, data]) => {
       if (!data || typeof data === "string") return;
@@ -1523,10 +1525,10 @@ const InvoicePage = () => {
       const m = data.month ?? null;
       const y = data.year ?? null;
       if (!sid || m === null || y === null) return;
-      
+
       // Only consider invoices for the current student
       if (sid !== studentId) return;
-      
+
       // Only consider months strictly before the current month/year
       if (y < currentYear || (y === currentYear && m < currentMonth)) {
         const status = data.status || "unpaid";
@@ -1536,24 +1538,24 @@ const InvoicePage = () => {
         }
       }
     });
-    
+
     // Also check sessions that may not have persisted invoices
     sessions.forEach((session) => {
       if (!session["Ngày"] || !session["Điểm danh"]) return;
       const sessionDate = new Date(session["Ngày"]);
       const sMonth = sessionDate.getMonth();
       const sYear = sessionDate.getFullYear();
-      
+
       // Only consider months strictly before current month/year
       if (!(sYear < currentYear || (sYear === currentYear && sMonth < currentMonth))) return;
-      
+
       // Check if student was present in this session
       const present = Array.isArray(session["Điểm danh"]) &&
         session["Điểm danh"].some(
           (r: any) => r["Student ID"] === studentId && r["Có mặt"]
         );
       if (!present) return;
-      
+
       // Find class/course price
       const classId = session["Class ID"];
       const classInfo = classes.find((c) => c.id === classId);
@@ -1577,16 +1579,16 @@ const InvoicePage = () => {
         });
         pricePerSession = course?.Giá || 0;
       }
-      
+
       // Check if there's a persisted invoice for this month and it's paid
       const persistedKey = `${studentId}-${sMonth}-${sYear}`;
       const persisted = studentInvoiceStatus[persistedKey];
       const persistedStatus = typeof persisted === "object" ? persisted.status : persisted;
       if (persistedStatus === "paid") return;
-      
+
       totalDebt += pricePerSession;
     });
-    
+
     return totalDebt;
   };
 
@@ -1849,14 +1851,14 @@ const InvoicePage = () => {
     const totalDebt = debtDetails.reduce((sum, d) => sum + (d.amount || 0), 0);
 
     // Build debt summary for display in receipt (simplified version)
-    const debtSummary = debtDetails.length > 0 
+    const debtSummary = debtDetails.length > 0
       ? `Nợ lũy kế ${debtDetails.length} tháng: ${totalDebt.toLocaleString("vi-VN")} đ`
       : "Không có nợ cũ";
-    
-    const debtDetail1 = debtDetails.length > 0 
+
+    const debtDetail1 = debtDetails.length > 0
       ? `Nợ các tháng: ${debtDetails.map(d => `T${d.month + 1}/${d.year}`).join(", ")}`
       : "";
-    
+
     const debtDetail2 = debtDetails.length > 0
       ? `Tổng nợ lũy kế: ${totalDebt.toLocaleString("vi-VN")} đ`
       : "";
@@ -2031,9 +2033,9 @@ const InvoicePage = () => {
                   width: var(--page-width); min-height: var(--page-height);
                   background: white; position: relative; overflow: hidden; box-sizing: border-box;
                   display: flex; flex-direction: column; 
-                  padding: 30px; /* Lề rộng cho viền */
-                  box-shadow: 0 0 25px rgba(0,0,0,0.5);
-                  margin: 0 auto;
+                  padding: 12px; /* Giảm lề để vừa khít A5 */
+                  box-shadow: none;
+                  margin: 0;
               }
       
               /* --- VIỀN DECOR --- */
@@ -2148,17 +2150,17 @@ const InvoicePage = () => {
               // Auto-save functionality for contenteditable fields
               let saveTimeout;
               let invoiceData = ${JSON.stringify({
-                id: invoice.id,
-                studentId: invoice.studentId,
-                studentName: invoice.studentName,
-                studentCode: invoice.studentCode,
-                month: invoice.month,
-                year: invoice.year,
-                totalSessions: invoice.totalSessions,
-                totalAmount: invoice.totalAmount,
-                discount: invoice.discount,
-                finalAmount: invoice.finalAmount
-              })};
+      id: invoice.id,
+      studentId: invoice.studentId,
+      studentName: invoice.studentName,
+      studentCode: invoice.studentCode,
+      month: invoice.month,
+      year: invoice.year,
+      totalSessions: invoice.totalSessions,
+      totalAmount: invoice.totalAmount,
+      discount: invoice.discount,
+      finalAmount: invoice.finalAmount
+    })};
 
               function saveInvoiceData() {
                 console.log('Saving invoice data...', invoiceData);
@@ -2424,7 +2426,7 @@ const InvoicePage = () => {
                                       <img class="qr-img" src="${qrUrl}" style="display:block;">
                                   </div>
                                   <div class="qr-note" contenteditable="true">${invoice.studentName
-      } - ${grade} - T${invoice.month + 1}${totalDebt > 0 ? ` (có nợ ${debtDetails.length} tháng)` : ""}</div>
+        } - ${grade} - T${invoice.month + 1}${totalDebt > 0 ? ` (có nợ ${debtDetails.length} tháng)` : ""}</div>
                               </div>
                               ` : ''}
                           </div>
@@ -2481,10 +2483,12 @@ const InvoicePage = () => {
         };
       }
 
+      // Lấy Lương GV - ưu tiên từ session, fallback về class, cuối cùng là teacher
+      // Ưu tiên: Session > Class > Teacher
       const salaryPerSession =
-        parseCurrency(classInfo?.["Lương GV"]) ||
-        parseCurrency(session["Lương GV"]) ||
-        parseCurrency(teacher?.["Lương theo buổi"]);
+        parseCurrency(session["Lương GV"]) ||          // 1. Từ Session (ưu tiên)
+        parseCurrency(classInfo?.["Lương GV"]) ||     // 2. Từ Lớp học (fallback)
+        parseCurrency(teacher?.["Lương theo buổi"]);  // 3. Từ Giáo viên (fallback cuối)
 
       const allowancePerSession = parseCurrency(session["Phụ cấp di chuyển"]);
 
@@ -2546,22 +2550,22 @@ const InvoicePage = () => {
       <div class="pl-wrapper">
         <style>
           .pl-wrapper { --primary-color: #003366; --secondary-color: #f8f9fa; --accent-color: #d32f2f; --success-color: #2e7d32; font-family: 'Montserrat', sans-serif; }
-          .pl-page { width: 148mm; min-height: 210mm; background: white; box-shadow: 0 0 20px rgba(0,0,0,0.1); position: relative; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; margin: 0 auto; }
+          .pl-page { width: 148mm; min-height: 210mm; background: white; box-shadow: none; position: relative; overflow: hidden; display: flex; flex-direction: column; box-sizing: border-box; margin: 0; }
           .pl-watermark-container { position: absolute; top: 55%; left: 50%; transform: translate(-50%, -50%); width: 70%; z-index: 0; pointer-events: none; opacity: 0.08; display: flex; justify-content: center; align-items: center; }
           .pl-watermark-img { width: 100%; height: auto; filter: grayscale(0%); }
-          .pl-header { background-color: var(--primary-color); color: white; padding: 14px 22px; border-bottom: 4px solid rgba(0,0,0,0.2); position: relative; z-index: 1; }
+          .pl-header { background-color: var(--primary-color); color: white; padding: 10px 16px; border-bottom: 4px solid rgba(0,0,0,0.2); position: relative; z-index: 1; }
           .pl-brand-section { margin-bottom: 6px; display: flex; align-items: center; gap: 12px; }
           .pl-logo-header { height: 55px; width: auto; object-fit: contain; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.3)); }
           .pl-brand-info { display: flex; flex-direction: column; }
-          .pl-brand-name { font-size: 10px; opacity: 0.9; letter-spacing: 0.4px; margin-bottom: 1px; text-transform: uppercase; }
-          .pl-brand-main { font-size: 16px; font-weight: 800; line-height: 1.2; }
+          .pl-brand-name { font-size: 10px; opacity: 0.9; letter-spacing: 0.4px; margin-bottom: 1px; text-transform: uppercase; font-family: 'Times New Roman', Times, serif; }
+          .pl-brand-main { font-size: 16px; font-weight: 800; line-height: 1.2; font-family: 'Times New Roman', Times, serif; }
           .pl-title-section { display: flex; justify-content: space-between; align-items: flex-end; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 6px; }
           .pl-main-title { font-size: 15px; font-weight: 700; text-transform: uppercase; }
           .pl-sub-title { font-size: 11px; opacity: 0.85; font-style: italic; }
-          .pl-content { padding: 14px 22px; flex: 1; position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px; }
-          .pl-info-grid { display: grid; grid-template-columns: 0.2fr 0.8fr; gap: 8px; }
+          .pl-content { padding: 10px 16px; flex: 1; position: relative; z-index: 1; display: flex; flex-direction: column; gap: 10px; }
+          .pl-info-grid { display: grid; grid-template-columns: 0.7fr 0.3fr; gap: 8px; }
           .pl-info-card { background: var(--secondary-color); padding: 10px 12px; border-radius: 8px; border-left: 4px solid var(--primary-color); }
-          .pl-card-header { font-size: 11px; font-weight: 700; color: var(--primary-color); margin-bottom: 6px; text-transform: uppercase; }
+          .pl-card-header { font-size: 11px; font-weight: 700; color: var(--primary-color); margin-bottom: 6px; text-transform: uppercase; font-family: 'Times New Roman', Times, serif; }
           .pl-info-row { display: flex; justify-content: space-between; margin-bottom: 4px; font-size: 11px; border-bottom: 1px dashed #d1d9e6; padding-bottom: 2px; }
           .pl-info-row:last-child { border-bottom: none; }
           .pl-label { color: #555; font-weight: 500; font-size: 10px; }
@@ -2680,11 +2684,11 @@ const InvoicePage = () => {
   };
 
   const printInvoice = (invoice: StudentInvoice, includeQR: boolean = true) => {
-      console.log('🖨️ Printing invoice with QR:', includeQR);
+    console.log('🖨️ Printing invoice with QR:', includeQR);
     // Get the latest data from state instead of using the passed invoice object
     const latestInvoiceData = studentInvoiceStatus[invoice.id];
     let updatedInvoice = { ...invoice };
-    
+
     // Merge with latest data if available
     if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
       updatedInvoice = {
@@ -2698,10 +2702,10 @@ const InvoicePage = () => {
         sessions: latestInvoiceData.sessions || invoice.sessions
       };
     }
-    
+
     // Always regenerate HTML with latest data to include any edits
     const freshContent = generateStudentInvoiceHTML(updatedInvoice, includeQR);
-    
+
     const printWindow = window.open("", "_blank");
     if (!printWindow) return;
 
@@ -3196,7 +3200,7 @@ const InvoicePage = () => {
         render: (_: any, record: GroupedStudentInvoice) => {
           const firstInvoice = record.invoices[0];
           const hasQR = invoiceQRPreferences[firstInvoice.id] !== false;
-          
+
           const menu = (
             <Menu>
               <Menu.Item

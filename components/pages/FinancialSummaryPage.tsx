@@ -353,8 +353,12 @@ const FinancialSummaryPage = () => {
       const teacher = teachers.find(t => t.id === teacherId);
       const teacherName = teacher?.["Họ và tên"] || teacher?.["Tên giáo viên"] || classData["Giáo viên chủ nhiệm"] || "Không xác định";
 
-      // Lấy hệ số lương giáo viên từ bảng Lớp học
-      const teacherSalaryPerSession = parseSalaryValue(classData["Lương GV"]);
+      // Lấy hệ số lương giáo viên - ưu tiên từ session, fallback về class
+      // Ưu tiên: Session > Class
+      const teacherSalaryPerSession = parseSalaryValue(
+        session["Lương GV"] ||          // 1. Từ Session (ưu tiên)
+        classData["Lương GV"]             // 2. Từ Lớp học (fallback)
+      );
       if (!teacherSalaryPerSession) return; // Bỏ qua nếu không có lương giáo viên
 
       if (!salaryMap[teacherId]) {

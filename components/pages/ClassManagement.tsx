@@ -345,17 +345,30 @@ const ClassManagement = () => {
 
   // Get unique values for filters
   const uniqueSubjects = useMemo(() => {
-    const subjects = new Set(classes.map((c) => c["Môn học"]));
+    const subjects = new Set(
+      classes
+        .map((c) => c["Môn học"])
+        .filter((subject): subject is string => !!subject)
+    );
     return Array.from(subjects).sort();
   }, [classes]);
 
   const uniqueGrades = useMemo(() => {
-    const grades = new Set(classes.map((c) => c["Khối"]));
+    const grades = new Set(
+      classes
+        .map((c) => c["Khối"])
+        .filter((grade) => grade != null)
+        .map((grade) => String(grade))
+    );
     return Array.from(grades).sort((a, b) => Number(a) - Number(b));
   }, [classes]);
 
   const uniqueTeachers = useMemo(() => {
-    const teachers = new Set(classes.map((c) => c["Giáo viên chủ nhiệm"]));
+    const teachers = new Set(
+      classes
+        .map((c) => c["Giáo viên chủ nhiệm"])
+        .filter((teacher): teacher is string => !!teacher)
+    );
     return Array.from(teachers).sort();
   }, [classes]);
 
@@ -382,7 +395,7 @@ const ClassManagement = () => {
       }
 
       // Grade filter
-      if (filterGrade !== "all" && c["Khối"].toString() !== filterGrade) {
+      if (filterGrade !== "all" && c["Khối"]?.toString() !== filterGrade) {
         return false;
       }
 
@@ -403,11 +416,11 @@ const ClassManagement = () => {
       // Search filter (search in class name, code, teacher)
       if (searchTerm) {
         const search = searchTerm.toLowerCase();
-        const matchName = c["Tên lớp"]?.toLowerCase().includes(search);
-        const matchCode = c["Mã lớp"]?.toLowerCase().includes(search);
+        const matchName = c["Tên lớp"]?.toLowerCase().includes(search) || false;
+        const matchCode = c["Mã lớp"]?.toLowerCase().includes(search) || false;
         const matchTeacher = c["Giáo viên chủ nhiệm"]
           ?.toLowerCase()
-          .includes(search);
+          .includes(search) || false;
 
         if (!matchName && !matchCode && !matchTeacher) {
           return false;
@@ -489,7 +502,7 @@ const ClassManagement = () => {
       key: "studentCount",
       width: 120,
       render: (_: any, record: Class) => (
-        <span>{record["Student IDs"]?.length || 0}</span>
+        <span>{Array.isArray(record["Student IDs"]) ? record["Student IDs"].length : 0}</span>
       ),
     },
     {
@@ -513,12 +526,16 @@ const ClassManagement = () => {
       width: 200,
       render: (_: any, record: Class) => (
         <div>
-          {record["Lịch học"]?.map((schedule, index) => (
-            <div key={index} style={{ fontSize: "12px" }}>
-              Thứ {schedule["Thứ"]}: {schedule["Giờ bắt đầu"]} -{" "}
-              {schedule["Giờ kết thúc"]}
-            </div>
-          ))}
+          {record["Lịch học"] && Array.isArray(record["Lịch học"]) && record["Lịch học"].length > 0 ? (
+            record["Lịch học"].map((schedule, index) => (
+              <div key={index} style={{ fontSize: "12px" }}>
+                Thứ {schedule["Thứ"]}: {schedule["Giờ bắt đầu"]} -{" "}
+                {schedule["Giờ kết thúc"]}
+              </div>
+            ))
+          ) : (
+            <span style={{ color: "#999" }}>Chưa có lịch</span>
+          )}
         </div>
       ),
     },

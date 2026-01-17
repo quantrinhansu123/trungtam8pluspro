@@ -469,11 +469,12 @@ const TeacherListView: React.FC = () => {
     filteredSessions.forEach((session) => {
       const classId = session["Class ID"];
       const classData = classes.find(c => c.id === classId);
-      // Lấy Lương GV từ lớp, nếu không có thì dùng Lương theo buổi của giáo viên
+      // Lấy Lương GV - ưu tiên từ session, fallback về class, cuối cùng là teacher
+      // Ưu tiên: Session > Class > Teacher
       const salaryForThisSession = parseSalaryValue(
-        classData?.["Lương GV"] ??
-        session["Lương GV"] ??
-        teacher?.["Lương theo buổi"]
+        session["Lương GV"] ??           // 1. Từ Session (ưu tiên)
+        classData?.["Lương GV"] ??       // 2. Từ Lớp học (fallback)
+        teacher?.["Lương theo buổi"]     // 3. Từ Giáo viên (fallback cuối)
       );
       totalSalary += salaryForThisSession;
     });
