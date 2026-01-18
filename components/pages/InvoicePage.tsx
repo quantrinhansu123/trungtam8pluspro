@@ -1295,7 +1295,7 @@ const InvoicePage = () => {
   // View and export invoice
   const viewStudentInvoice = (invoice: StudentInvoice) => {
     let currentInvoiceData = { ...invoice };
-    let currentIncludeQR = true; // Local state for QR preference
+    const currentIncludeQR = invoiceQRPreferences[invoice.id] !== false; // Get QR preference from list
     let modal: any = null;
 
     // Get the latest data from state
@@ -1378,49 +1378,24 @@ const InvoicePage = () => {
         />
       ),
       footer: (
-        <Space style={{ width: '100%', justifyContent: 'space-between' }}>
-          <Space size="small" align="center">
-            <span style={{ fontWeight: 500 }}>Hiển thị QR:</span>
+        <Space style={{ width: '100%', justifyContent: 'flex-end' }}>
+          {!isPaid && (
             <Button
-              type={currentIncludeQR ? 'primary' : 'default'}
+              type="primary"
+              icon={<PrinterOutlined />}
               onClick={() => {
-                currentIncludeQR = true;
-                refreshModal();
+                // Always get the latest data before printing
+                const latestData = getLatestInvoiceData();
+                printInvoice(latestData, currentIncludeQR);
               }}
-              size="small"
             >
-              ✓ Có QR
+              In phiếu
             </Button>
-            <Button
-              type={!currentIncludeQR ? 'primary' : 'default'}
-              onClick={() => {
-                currentIncludeQR = false;
-                refreshModal();
-              }}
-              size="small"
-            >
-              ✓ Không QR
-            </Button>
-          </Space>
-          <Space>
-            {!isPaid && (
-              <Button
-                type="primary"
-                icon={<PrinterOutlined />}
-                onClick={() => {
-                  // Always get the latest data before printing
-                  const latestData = getLatestInvoiceData();
-                  printInvoice(latestData, currentIncludeQR);
-                }}
-              >
-                In phiếu
-              </Button>
-            )}
-            <Button onClick={() => {
-              window.removeEventListener('message', handleMessage);
-              modal.destroy();
-            }}>Đóng</Button>
-          </Space>
+          )}
+          <Button onClick={() => {
+            window.removeEventListener('message', handleMessage);
+            modal.destroy();
+          }}>Đóng</Button>
         </Space>
       ),
     });
@@ -2307,7 +2282,7 @@ const InvoicePage = () => {
       
                   <div class="content">
                       <div class="info-grid">
-                          <div class="info-box">
+                          <div class="info-box" ${!includeQR ? 'style="flex: 1;"' : ''}>
                               <div class="box-title"><i class="fas fa-user-graduate"></i> Học sinh</div>
                               <div class="info-row"><span class="info-label">Họ tên:</span><span class="info-val" contenteditable="true">${invoice.studentName
       }</span></div>
@@ -2315,12 +2290,12 @@ const InvoicePage = () => {
                               <div class="info-row"><span class="info-label">Mã HS:</span><span class="info-val" contenteditable="true">${invoice.studentCode || "..."
       }</span></div>
                           </div>
-                          <div class="info-box">
+                          ${includeQR ? `<div class="info-box">
                               <div class="box-title"><i class="fas fa-credit-card"></i> Thanh toán</div>
                               <div class="info-row"><span class="info-label">Người nhận:</span><span class="info-val">${accountName}</span></div>
                               <div class="info-row"><span class="info-label">NH:</span><span class="info-val" contenteditable="true">${bankId}</span></div>
                               <div class="info-row"><span class="info-label">STK:</span><span class="info-val" contenteditable="true">${accountNo}</span></div>
-                          </div>
+                          </div>` : ''}
                       </div>
       
                       <div class="table-container">

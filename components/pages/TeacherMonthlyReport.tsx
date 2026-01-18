@@ -260,9 +260,11 @@ const TeacherMonthlyReport = () => {
             if (record["Có mặt"]) {
               clsPresent++;
             }
-            if (record["Điểm"] != null) {
-              clsScores.push(record["Điểm"]);
-              allScores.push(record["Điểm"]);
+            // Ưu tiên điểm kiểm tra, nếu không có thì dùng điểm bài tập
+            const score = record["Điểm kiểm tra"] ?? record["Điểm"];
+            if (score != null) {
+              clsScores.push(score);
+              allScores.push(score);
             }
             if (record["Điểm thưởng"]) {
               clsBonusPoints += record["Điểm thưởng"];
@@ -384,7 +386,7 @@ const TeacherMonthlyReport = () => {
                 status: record["Có mặt"]
                   ? record["Đi muộn"] ? "Đi muộn" : "Có mặt"
                   : record["Vắng có phép"] ? "Vắng có phép" : "Vắng không phép",
-                score: record["Điểm"] ?? undefined,
+                score: record["Điểm kiểm tra"] ?? record["Điểm"] ?? undefined,
               });
             }
           });
@@ -527,7 +529,7 @@ const TeacherMonthlyReport = () => {
             status: record["Có mặt"]
               ? record["Đi muộn"] ? "Đi muộn" : "Có mặt"
               : record["Vắng có phép"] ? "Vắng có phép" : "Vắng không phép",
-            score: record["Điểm"] ?? undefined,
+            score: record["Điểm kiểm tra"] ?? record["Điểm"] ?? undefined,
           });
         }
       });
@@ -718,7 +720,8 @@ const TeacherMonthlyReport = () => {
       classSessions.forEach((session) => {
         const attendanceRecord = session["Điểm danh"]?.find((r) => r["Student ID"] === record.studentId);
         if (attendanceRecord) {
-          scoresMap[session.id] = attendanceRecord["Điểm"] ?? null;
+          // Ưu tiên điểm kiểm tra, nếu không có thì dùng điểm bài tập
+          scoresMap[session.id] = attendanceRecord["Điểm kiểm tra"] ?? attendanceRecord["Điểm"] ?? null;
         }
       });
     });
@@ -752,8 +755,8 @@ const TeacherMonthlyReport = () => {
         const recordIndex = attendanceRecords.findIndex((r: any) => r["Student ID"] === editingScoresStudent.studentId);
 
         if (recordIndex !== -1) {
-          // Update the score in the attendance record
-          updates[`datasheet/Điểm_danh_sessions/${sessionId}/Điểm danh/${recordIndex}/Điểm`] = newScore;
+          // Update the score in the attendance record - lưu vào Điểm kiểm tra để đồng bộ
+          updates[`datasheet/Điểm_danh_sessions/${sessionId}/Điểm danh/${recordIndex}/Điểm kiểm tra`] = newScore;
         }
       }
 
@@ -1263,7 +1266,7 @@ const TeacherMonthlyReport = () => {
         title={
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <EditOutlined style={{ color: '#1890ff' }} />
-            <span>Sửa điểm - {editingScoresStudent?.studentName}</span>
+            <span>Sửa điểm - {editingScoresStudent?.studentName} (Tháng {selectedMonth.format("MM/YYYY")})</span>
           </div>
         }
         open={editScoresModalOpen}
@@ -1359,7 +1362,7 @@ const TeacherMonthlyReport = () => {
 
                         if (!attendanceRecord) return null;
 
-                        const currentScore = attendanceRecord["Điểm"] ?? null;
+                        const currentScore = attendanceRecord["Điểm kiểm tra"] ?? attendanceRecord["Điểm"] ?? null;
                         const attendance = attendanceRecord["Có mặt"]
                           ? attendanceRecord["Đi muộn"] ? "Đi muộn" : "Có mặt"
                           : attendanceRecord["Vắng có phép"] ? "Vắng có phép" : "Vắng";

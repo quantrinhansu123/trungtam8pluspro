@@ -381,11 +381,31 @@ const AdminMonthlyReportReview = () => {
       })
       .sort((a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime());
 
+    // Tính lại điểm trung bình từ sessions thực tế để đồng bộ
+    let totalScores: number[] = [];
+    allStudentSessions.forEach((session) => {
+      const record = session["Điểm danh"]?.find((r: any) => r["Student ID"] === comment.studentId);
+      if (record) {
+        const score = record["Điểm kiểm tra"] ?? record["Điểm"];
+        if (score != null && typeof score === 'number') {
+          totalScores.push(score);
+        }
+      }
+    });
+    const recalculatedAvgScore = totalScores.length > 0
+      ? totalScores.reduce((a, b) => a + b, 0) / totalScores.length
+      : 0;
+
     // Generate BẢNG ĐIỂM THEO MÔN - giống ảnh mẫu
+    // Chỉ hiển thị khi có ít nhất 1 điểm
     let scoreTablesHTML = "";
+    let hasAnyScoreInAnyClass = false; // Biến kiểm tra xem có điểm nào không
+    
     classStats.forEach((cs: ClassStats) => {
       const classSessions = allStudentSessions.filter((s) => s["Class ID"] === cs.classId);
 
+      // Tính lại điểm trung bình cho lớp này từ sessions
+      let classScores: number[] = [];
       let tableRows = "";
       classSessions.forEach((session) => {
         const record = session["Điểm danh"]?.find((r) => r["Student ID"] === comment.studentId);
@@ -403,6 +423,13 @@ const AdminMonthlyReportReview = () => {
           const bonusScore = record["Điểm thưởng"] ?? "-";
           const note = record["Ghi chú"] || "-";
 
+          // Thu thập điểm để tính trung bình lớp
+          const numericScore = record["Điểm kiểm tra"] ?? record["Điểm"];
+          if (numericScore != null && typeof numericScore === 'number') {
+            classScores.push(numericScore);
+            hasAnyScoreInAnyClass = true; // Đánh dấu có ít nhất 1 điểm
+          }
+
           tableRows += `
             <tr>
               <td style="text-align: center;">${date}</td>
@@ -417,36 +444,44 @@ const AdminMonthlyReportReview = () => {
         }
       });
 
-      scoreTablesHTML += `
-        <div class="subject-section">
-          <div class="subject-header">
-            <span class="subject-name">📚 ${cs.className} ${cs.subject ? `(${cs.subject})` : ""}</span>
-            <span class="subject-avg">TB: <strong>${cs.averageScore > 0 ? cs.averageScore.toFixed(1) : "-"}</strong></span>
+      // Tính điểm trung bình lớp từ sessions thực tế
+      const recalculatedClassAvg = classScores.length > 0
+        ? classScores.reduce((a, b) => a + b, 0) / classScores.length
+        : 0;
+
+      // Chỉ thêm bảng điểm cho lớp này nếu có ít nhất 1 điểm
+      if (classScores.length > 0) {
+        scoreTablesHTML += `
+          <div class="subject-section">
+            <div class="subject-header">
+              <span class="subject-name">📚 ${cs.className} ${cs.subject ? `(${cs.subject})` : ""}</span>
+              <span class="subject-avg">TB: <strong>${recalculatedClassAvg > 0 ? recalculatedClassAvg.toFixed(1) : "-"}</strong></span>
+            </div>
+            <table class="score-table">
+              <thead>
+                <tr>
+                  <th style="width: 55px;">Ngày</th>
+                  <th style="width: 65px;">Chuyên cần</th>
+                  <th style="width: 55px;">% BTVN</th>
+                  <th style="width: 100px;">Tên bài KT</th>
+                  <th style="width: 50px;">Điểm</th>
+                  <th style="width: 65px;">Điểm thưởng</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${tableRows || '<tr><td colspan="7" style="text-align: center; color: #999;">Không có dữ liệu</td></tr>'}
+              </tbody>
+            </table>
+            ${cs.comment ? `
+            <div class="subject-comment">
+              <div class="comment-label">📝 Nhận xét môn học:</div>
+              <div class="comment-content">${cs.comment.replace(/\n/g, "<br/>")}</div>
+            </div>
+            ` : ""}
           </div>
-          <table class="score-table">
-            <thead>
-              <tr>
-                <th style="width: 55px;">Ngày</th>
-                <th style="width: 65px;">Chuyên cần</th>
-                <th style="width: 55px;">% BTVN</th>
-                <th style="width: 100px;">Tên bài KT</th>
-                <th style="width: 50px;">Điểm</th>
-                <th style="width: 65px;">Điểm thưởng</th>
-                <th>Ghi chú</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${tableRows || '<tr><td colspan="7" style="text-align: center; color: #999;">Không có dữ liệu</td></tr>'}
-            </tbody>
-          </table>
-          ${cs.comment ? `
-          <div class="subject-comment">
-            <div class="comment-label">📝 Nhận xét môn học:</div>
-            <div class="comment-content">${cs.comment.replace(/\n/g, "<br/>")}</div>
-          </div>
-          ` : ""}
-        </div>
-      `;
+        `;
+      }
     });
 
     // Generate LỊCH SỬ HỌC TẬP CHI TIẾT - giống ảnh mẫu
@@ -696,16 +731,18 @@ const AdminMonthlyReportReview = () => {
                     <div class="stat-label">Tỷ lệ tham gia</div>
                   </div>
                   <div class="stat-card">
-                    <div class="stat-value" style="color: #722ed1;">${comment.stats?.averageScore > 0 ? comment.stats.averageScore.toFixed(1) : "0"}</div>
+                    <div class="stat-value" style="color: #722ed1;">${recalculatedAvgScore > 0 ? recalculatedAvgScore.toFixed(1) : "0"}</div>
                     <div class="stat-label">Điểm trung bình</div>
                   </div>
                 </div>
               </div>
 
+              ${hasAnyScoreInAnyClass ? `
               <div class="section">
                 <div class="section-title">Bảng điểm theo môn</div>
-                ${scoreTablesHTML || '<p style="color: #999; text-align: center;">Không có dữ liệu</p>'}
+                ${scoreTablesHTML}
               </div>
+              ` : ''}
 
               <div class="section" style="page-break-before: auto;">
                 <div class="section-title">Lịch sử học tập chi tiết</div>
