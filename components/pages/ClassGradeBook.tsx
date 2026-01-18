@@ -214,32 +214,31 @@ const ClassGradeBook = () => {
       const data = snapshot.val();
 
       if (data && data.scores && data.columns) {
-        // Merge manual scores with auto-populated scores
+        // Lấy danh sách cột từ Firebase - đây là nguồn chính xác nhất
+        const dbColumns = data.columns.map((col: string) => normalizeColumnLabel(col));
         const manualScores = data.scores.map((score: any) => normalizeScoreKeys(score));
-        const manualColumns = data.columns.map((col: string) => normalizeColumnLabel(col));
-        const loadedDeletedColumns = data.deletedColumns || [];
 
-        // Add manual columns that don't exist in test names
-        manualColumns.forEach((col: string) => {
-          if (!columnsArray.includes(col)) {
-            columnsArray.push(col);
-          }
-        });
-
-        // Filter out deleted columns
-        const filteredColumnsArray = columnsArray.filter(
-          (col: string) => !loadedDeletedColumns.includes(col)
-        );
-
-        // Merge scores
+        // Merge scores - ưu tiên dữ liệu từ DB
         const mergedScores = scoresArray.map((autoScore: any) => {
           const manualScore = manualScores.find((s: any) => s.studentId === autoScore.studentId);
-          return { ...autoScore, ...manualScore };
+          if (manualScore) {
+            // Chỉ giữ các cột còn tồn tại trong dbColumns
+            const filteredScore: any = { studentId: autoScore.studentId };
+            dbColumns.forEach((col: string) => {
+              if (manualScore[col] !== undefined) {
+                filteredScore[col] = manualScore[col];
+              } else if (autoScore[col] !== undefined) {
+                filteredScore[col] = autoScore[col];
+              }
+            });
+            return filteredScore;
+          }
+          return autoScore;
         });
 
         setCustomScores(mergedScores);
-        setCustomColumns(filteredColumnsArray);
-        setDeletedColumns(loadedDeletedColumns);
+        setCustomColumns(dbColumns);
+        setDeletedColumns([]);
         setHasUnsavedChanges(false);
       } else {
         // No manual scores, use auto-populated only
@@ -264,7 +263,6 @@ const ClassGradeBook = () => {
       await set(scoresRef, {
         scores: normalizedScores,
         columns: normalizedColumns,
-        deletedColumns: deletedColumns,
         lastUpdated: new Date().toISOString(),
       });
       setHasUnsavedChanges(false);
@@ -278,47 +276,30 @@ const ClassGradeBook = () => {
   // Open attendance form for selected session
   const handleOpenAttendanceForm = () => {
     if (!selectedSessionId) {
-      message.warning("Vui lòng chọn ca học");
+      message.warning("Vui lòng chọn buổi học");
+      return;
+    }
+    if (!customColumnName.trim()) {
+      message.warning("Vui lòng nhập tên cột điểm");
       return;
     }
 
     const session = attendanceSessions.find(s => s.id === selectedSessionId);
     if (!session) {
-      message.error("Không tìm thấy ca học");
+      message.error("Không tìm thấy buổi học");
       return;
     }
 
-    // Load current scores from session
+    // Initialize empty scores for all students in this class
     const scoresMap: { [studentId: string]: number | null } = {};
-    const records = Array.isArray(session["Điểm danh"])
-      ? session["Điểm danh"]
-      : Object.values(session["Điểm danh"] || {});
-
-
-    let testName = "";
-    records.forEach((record: any) => {
-      const studentId = record["Student ID"];
-      if (studentId) {
-        // Get score - prioritize "Điểm kiểm tra", then "Điểm"
-        let score: number | null = null;
-        if (record["Điểm kiểm tra"] != null && record["Điểm kiểm tra"] !== "") {
-          score = Number(record["Điểm kiểm tra"]);
-        } else if (record["Điểm"] != null && record["Điểm"] !== "") {
-          score = Number(record["Điểm"]);
-        }
-        scoresMap[studentId] = score;
-
-        // Get test name from first record that has it
-        if (!testName && record["Bài kiểm tra"]) {
-          testName = record["Bài kiểm tra"];
-          console.log("Found test name:", testName, "from record:", record);
-        }
-      }
+    const studentIds = classData?.["Student IDs"] || [];
+    
+    studentIds.forEach((studentId: string) => {
+      scoresMap[studentId] = null; // Start with empty scores for new column
     });
 
-    console.log("Final test name to load:", testName);
     setEditingScores(scoresMap);
-    setCustomColumnName(testName); // Load existing test name
+    // Keep customColumnName as entered by user
     setIsAddColumnModalOpen(false);
     setIsAttendanceFormOpen(true);
   };
@@ -334,6 +315,10 @@ const ClassGradeBook = () => {
   // Save scores from attendance form
   const handleSaveAttendanceScores = async () => {
     if (!selectedSessionId) return;
+    if (!customColumnName.trim()) {
+      message.warning("Vui lòng nhập tên cột điểm");
+      return;
+    }
 
     const session = attendanceSessions.find(s => s.id === selectedSessionId);
     if (!session) return;
@@ -346,23 +331,56 @@ const ClassGradeBook = () => {
         ? session["Điểm danh"]
         : Object.values(session["Điểm danh"] || {});
 
+      // Create column name with date
+      const sessionDate = session["Ngày"];
+      const formattedDate = dayjs(sessionDate).format("DD-MM-YYYY");
+      const columnName = normalizeColumnLabel(`${customColumnName.trim()} (${formattedDate})`);
+
+      // Prepare new scores for customScores
+      const newScoresMap: { [studentId: string]: number | null } = {};
+
       records.forEach((record: any, index: number) => {
         const studentId = record["Student ID"];
         if (studentId && editingScores.hasOwnProperty(studentId)) {
           const newScore = editingScores[studentId];
-          // Update both "Điểm kiểm tra" and "Điểm"
+          newScoresMap[studentId] = newScore;
+
+          // Update session scores for sync with student view
           updates[`datasheet/Điểm_danh_sessions/${selectedSessionId}/Điểm danh/${index}/Điểm kiểm tra`] = newScore;
           updates[`datasheet/Điểm_danh_sessions/${selectedSessionId}/Điểm danh/${index}/Điểm`] = newScore;
-
-          // Update test name if provided
-          if (customColumnName.trim()) {
-            updates[`datasheet/Điểm_danh_sessions/${selectedSessionId}/Điểm danh/${index}/Bài kiểm tra`] = customColumnName.trim();
-          }
+          updates[`datasheet/Điểm_danh_sessions/${selectedSessionId}/Điểm danh/${index}/Bài kiểm tra`] = customColumnName.trim();
         }
       });
 
       if (Object.keys(updates).length > 0) {
+        // 1. Update session in Firebase (for sync)
         await update(ref(database), updates);
+
+        // 2. Add new column to customColumns and customScores
+        const newColumns = [...customColumns];
+        if (!newColumns.includes(columnName)) {
+          newColumns.push(columnName);
+        }
+
+        const newScores = customScores.map((score) => ({
+          ...score,
+          [columnName]: newScoresMap[score.studentId] ?? score[columnName] ?? null,
+        }));
+
+        // Also add scores for students not in customScores yet
+        const studentIds = classData?.["Student IDs"] || [];
+        studentIds.forEach((studentId: string) => {
+          if (!newScores.find(s => s.studentId === studentId)) {
+            newScores.push({
+              studentId,
+              [columnName]: newScoresMap[studentId] ?? null,
+            });
+          }
+        });
+
+        // 3. Save to Firebase Điểm_tự_nhập
+        await saveCustomScores(newScores, newColumns);
+
         message.success("Đã lưu điểm thành công!");
         setIsAttendanceFormOpen(false);
         setSelectedSessionId(null);
@@ -377,17 +395,34 @@ const ClassGradeBook = () => {
     }
   };
 
-  // Delete column
-  const handleDeleteColumn = (columnName: string) => {
-    const newColumns = customColumns.filter((c) => c !== columnName);
-    const newScores = customScores.map((score) => {
-      const { [columnName]: _, ...rest } = score;
-      return rest;
-    });
-    setCustomColumns(newColumns);
-    setCustomScores(newScores);
-    setDeletedColumns([...deletedColumns, columnName]);
-    setHasUnsavedChanges(true);
+  // Delete column - xóa thực sự trong DB
+  const handleDeleteColumn = async (columnName: string) => {
+    try {
+      const newColumns = customColumns.filter((c) => c !== columnName);
+      const newScores = customScores.map((score) => {
+        const { [columnName]: _, ...rest } = score;
+        return rest;
+      });
+      
+      // Lưu ngay vào DB để xóa hẳn
+      if (classId) {
+        const scoresRef = ref(database, `datasheet/Điểm_tự_nhập/${classId}`);
+        const normalizedScores = newScores.map((score) => normalizeScoreKeys(score));
+        const normalizedColumns = newColumns.map((col) => normalizeColumnLabel(col));
+        await set(scoresRef, {
+          scores: normalizedScores,
+          columns: normalizedColumns,
+          lastUpdated: new Date().toISOString(),
+        });
+        message.success(`Đã xóa cột "${columnName}"`);
+      }
+      
+      setCustomColumns(newColumns);
+      setCustomScores(newScores);
+    } catch (error) {
+      console.error("Error deleting column:", error);
+      message.error("Lỗi khi xóa cột");
+    }
   };
 
   // Update score
@@ -460,39 +495,21 @@ const ClassGradeBook = () => {
     return result;
   }, [classData, students]);
 
-  // Get available sessions (not yet added as columns)
+  // Get all sessions for this class (allow multiple columns per session)
   const availableSessions = useMemo(() => {
     if (!classData || attendanceSessions.length === 0) return [];
 
     return attendanceSessions
       .filter((session) => {
         // Only sessions for this class
-        if (session["Class ID"] !== classData.id) return false;
-
-        // Create column name from session
-        const sessionDate = session["Ngày"];
-        const formattedDate = dayjs(sessionDate).format("DD-MM-YYYY");
-
-        const records = Array.isArray(session["Điểm danh"])
-          ? session["Điểm danh"]
-          : Object.values(session["Điểm danh"] || {});
-
-        const testName = records.find((r: any) => r["Bài kiểm tra"])?.["Bài kiểm tra"] || "";
-
-        const columnKey = testName
-          ? `${testName} (${formattedDate})`
-          : `Điểm (${formattedDate})`;
-        const normalizedName = normalizeColumnLabel(columnKey);
-
-        // Check if this column already exists
-        return !customColumns.includes(normalizedName);
+        return session["Class ID"] === classData.id;
       })
       .sort((a, b) => {
         const dateA = dayjs(a["Ngày"]);
         const dateB = dayjs(b["Ngày"]);
         return dateB.isBefore(dateA) ? -1 : dateB.isAfter(dateA) ? 1 : 0;
       });
-  }, [classData, attendanceSessions, customColumns]);
+  }, [classData, attendanceSessions]);
 
   // Get filtered columns based on date/month filter
   const filteredColumns = useMemo(() => {
@@ -1118,7 +1135,7 @@ const ClassGradeBook = () => {
 
       {/* Select Session Modal */}
       <Modal
-        title="Chọn ca học để chỉnh sửa điểm"
+        title="Thêm cột điểm mới"
         open={isAddColumnModalOpen}
         onCancel={() => {
           setIsAddColumnModalOpen(false);
@@ -1126,17 +1143,18 @@ const ClassGradeBook = () => {
           setCustomColumnName("");
         }}
         onOk={handleOpenAttendanceForm}
-        okText="Mở form điểm"
+        okText="Tiếp tục"
         cancelText="Hủy"
+        okButtonProps={{ disabled: !selectedSessionId || !customColumnName.trim() }}
         width={600}
       >
         <div style={{ marginBottom: 16 }}>
           <div style={{ marginBottom: 8, color: '#666', fontWeight: 500 }}>
-            Chọn ca học từ lịch của lớp:
+            1. Chọn buổi học đã dạy:
           </div>
           <Select
             style={{ width: '100%' }}
-            placeholder="Chọn ca học"
+            placeholder="Chọn buổi học"
             value={selectedSessionId}
             onChange={(value) => setSelectedSessionId(value)}
             showSearch
@@ -1145,30 +1163,37 @@ const ClassGradeBook = () => {
             {availableSessions.map((session) => {
               const sessionDate = session["Ngày"];
               const formattedDate = dayjs(sessionDate).format("DD/MM/YYYY");
-
-              const records = Array.isArray(session["Điểm danh"])
-                ? session["Điểm danh"]
-                : Object.values(session["Điểm danh"] || {});
-
-              const testName = records.find((r: any) => r["Bài kiểm tra"])?.["Bài kiểm tra"] || "";
-
-              const label = testName
-                ? `${testName} - ${formattedDate} - ${classData?.["Tên lớp"]}`
-                : `Điểm - ${formattedDate} - ${classData?.["Tên lớp"]}`;
+              const timeStart = session["Giờ bắt đầu"] || "";
+              const timeEnd = session["Giờ kết thúc"] || "";
+              const timeRange = timeStart && timeEnd ? ` (${timeStart} - ${timeEnd})` : "";
 
               return (
                 <Select.Option key={session.id} value={session.id}>
-                  {label}
+                  {formattedDate}{timeRange}
                 </Select.Option>
               );
             })}
           </Select>
 
           {availableSessions.length === 0 && (
-            <div style={{ marginTop: 8, color: '#999', fontSize: 12 }}>
-              Tất cả các ca học đã được thêm vào bảng điểm.
+            <div style={{ marginTop: 8, color: '#ff4d4f', fontSize: 12 }}>
+              Chưa có buổi học nào. Vui lòng điểm danh trước khi thêm điểm.
             </div>
           )}
+        </div>
+
+        <div style={{ marginBottom: 16 }}>
+          <div style={{ marginBottom: 8, color: '#666', fontWeight: 500 }}>
+            2. Đặt tên cột điểm <span style={{ color: '#ff4d4f' }}>*</span>:
+          </div>
+          <Input
+            value={customColumnName}
+            onChange={(e) => setCustomColumnName(e.target.value)}
+            placeholder="Ví dụ: Kiểm tra 15 phút, Bài tập về nhà, Giữa kỳ..."
+          />
+          <div style={{ marginTop: 4, color: '#999', fontSize: 12 }}>
+            💡 Một buổi học có thể có nhiều cột điểm (VD: Điểm bài cũ, Điểm kiểm tra, Điểm bài tập)
+          </div>
         </div>
       </Modal>
 
@@ -1176,12 +1201,14 @@ const ClassGradeBook = () => {
       <Modal
         title={(() => {
           const session = attendanceSessions.find(s => s.id === selectedSessionId);
-          return session ? `Chỉnh sửa điểm - ${dayjs(session["Ngày"]).format("DD/MM/YYYY")}` : "Chỉnh sửa điểm";
+          const formattedDate = session ? dayjs(session["Ngày"]).format("DD/MM/YYYY") : "";
+          return `Nhập điểm: ${customColumnName} (${formattedDate})`;
         })()}
         open={isAttendanceFormOpen}
         onCancel={() => {
           setIsAttendanceFormOpen(false);
           setSelectedSessionId(null);
+          setCustomColumnName("");
           setEditingScores({});
         }}
         onOk={handleSaveAttendanceScores}
@@ -1196,9 +1223,6 @@ const ClassGradeBook = () => {
           const records = Array.isArray(session["Điểm danh"])
             ? session["Điểm danh"]
             : Object.values(session["Điểm danh"] || {});
-
-          // Get current test name from session
-          const currentTestName = records.find((r: any) => r["Bài kiểm tra"])?.[" Bài kiểm tra"] || "";
 
           const studentIds = classData?.["Student IDs"] || [];
           const studentData = studentIds.map((studentId: string) => {
@@ -1216,18 +1240,9 @@ const ClassGradeBook = () => {
 
           return (
             <div>
-              <div style={{ marginBottom: 16 }}>
-                <div style={{ marginBottom: 8, color: '#666', fontWeight: 500 }}>
-                  Tên bài kiểm tra (tùy chọn):
-                </div>
-                <Input
-                  value={customColumnName}
-                  onChange={(e) => setCustomColumnName(e.target.value)}
-                  placeholder="Ví dụ: Kiểm tra 15 phút, Giữa kỳ, Cuối kỳ..."
-                />
-                <div style={{ marginTop: 4, color: '#999', fontSize: 12 }}>
-                  Tên này sẽ được lưu vào bài kiểm tra của tất cả học sinh
-                </div>
+              <div style={{ marginBottom: 16, padding: '8px 12px', backgroundColor: '#f6f8fa', borderRadius: 6 }}>
+                <span style={{ color: '#666' }}>Cột điểm: </span>
+                <strong style={{ color: '#1890ff' }}>{customColumnName}</strong>
               </div>
 
               <Table

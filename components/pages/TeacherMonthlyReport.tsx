@@ -97,7 +97,8 @@ const TeacherMonthlyReport = () => {
   // Edit scores modal state
   const [editScoresModalOpen, setEditScoresModalOpen] = useState(false);
   const [editingScoresStudent, setEditingScoresStudent] = useState<StudentReportRow | null>(null);
-  const [editingScores, setEditingScores] = useState<{ [sessionId: string]: number | null }>({});
+  const [editingScores, setEditingScores] = useState<{ [columnKey: string]: number | null }>({});
+  const [customScoresData, setCustomScoresData] = useState<{ [classId: string]: any }>({});
 
   // Kiểm tra xem tháng đã kết thúc chưa (bỏ qua nếu đang ở chế độ test)
   const isMonthEnded = useMemo(() => {
@@ -201,6 +202,32 @@ const TeacherMonthlyReport = () => {
     });
     return () => unsubscribe();
   }, []);
+
+  // Load custom scores (Điểm tự nhập) for all teacher's classes
+  useEffect(() => {
+    if (classes.length === 0) return;
+
+    const customScoresRef = ref(database, "datasheet/Điểm_tự_nhập");
+    const unsubscribe = onValue(customScoresRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        // Filter only classes that belong to this teacher
+        const teacherClassIds = classes.map(c => c.id);
+        const filteredData: { [classId: string]: any } = {};
+        
+        Object.entries(data).forEach(([classId, classScores]) => {
+          if (teacherClassIds.includes(classId)) {
+            filteredData[classId] = classScores;
+          }
+        });
+        
+        setCustomScoresData(filteredData);
+      } else {
+        setCustomScoresData({});
+      }
+    });
+    return () => unsubscribe();
+  }, [classes]);
 
   // Lấy danh sách học sinh unique từ tất cả các lớp của teacher
   const uniqueStudentIds = useMemo(() => {
@@ -703,27 +730,45 @@ const TeacherMonthlyReport = () => {
     }
   };
 
-  // Open edit scores modal
+  // Open edit scores modal - Load ALL score columns for the selected month
   const handleOpenEditScores = (record: StudentReportRow) => {
     setEditingScoresStudent(record);
 
-    // Load current scores from sessions
     const monthStr = selectedMonth.format("YYYY-MM");
-    const scoresMap: { [sessionId: string]: number | null } = {};
+    const scoresMap: { [columnKey: string]: number | null } = {};
 
+    // Load scores from customScoresData (Điểm tự nhập) - PRIMARY SOURCE
     record.classIds.forEach((classId) => {
-      const classSessions = sessions.filter((s) => {
-        const sessionMonth = dayjs(s["Ngày"]).format("YYYY-MM");
-        return s["Class ID"] === classId && sessionMonth === monthStr;
-      });
+      const classScores = customScoresData[classId];
+      if (!classScores?.columns || !classScores?.scores) return;
 
-      classSessions.forEach((session) => {
-        const attendanceRecord = session["Điểm danh"]?.find((r) => r["Student ID"] === record.studentId);
-        if (attendanceRecord) {
-          // Ưu tiên điểm kiểm tra, nếu không có thì dùng điểm bài tập
-          scoresMap[session.id] = attendanceRecord["Điểm kiểm tra"] ?? attendanceRecord["Điểm"] ?? null;
-        }
-      });
+      const deletedColumns = classScores.deletedColumns || [];
+      
+      // Find student's scores
+      const studentScore = classScores.scores.find(
+        (s: any) => s.studentId === record.studentId
+      );
+
+      if (studentScore) {
+        classScores.columns.forEach((columnName: string) => {
+          // Skip deleted columns
+          if (deletedColumns.includes(columnName)) return;
+          
+          // Check if column belongs to this month
+          const dateMatch = columnName.match(/\((\d{2}-\d{2}-\d{4})\)$/);
+          if (dateMatch) {
+            const [day, month, year] = dateMatch[1].split("-");
+            const columnMonth = `${year}-${month}`;
+            if (columnMonth === monthStr) {
+              const scoreValue = studentScore[columnName];
+              const columnKey = `${classId}|${columnName}`;
+              scoresMap[columnKey] = scoreValue !== null && scoreValue !== undefined && scoreValue !== "" 
+                ? Number(scoreValue) 
+                : null;
+            }
+          }
+        });
+      }
     });
 
     setEditingScores(scoresMap);
@@ -731,14 +776,14 @@ const TeacherMonthlyReport = () => {
   };
 
   // Handle score change in modal
-  const handleScoreChange = (sessionId: string, value: number | null) => {
+  const handleScoreChange = (columnKey: string, value: number | null) => {
     setEditingScores(prev => ({
       ...prev,
-      [sessionId]: value
+      [columnKey]: value
     }));
   };
 
-  // Save edited scores to Firebase
+  // Save edited scores to Firebase - Update in Điểm_tự_nhập
   const handleSaveScores = async () => {
     if (!editingScoresStudent) return;
 
@@ -746,17 +791,59 @@ const TeacherMonthlyReport = () => {
     try {
       const updates: { [key: string]: any } = {};
 
-      // Update each session's attendance record
-      for (const [sessionId, newScore] of Object.entries(editingScores)) {
-        const session = sessions.find(s => s.id === sessionId);
-        if (!session) continue;
+      // Group updates by classId
+      const updatesByClass: { [classId: string]: { [columnName: string]: number | null } } = {};
 
-        const attendanceRecords = session["Điểm danh"] || [];
-        const recordIndex = attendanceRecords.findIndex((r: any) => r["Student ID"] === editingScoresStudent.studentId);
+      for (const [columnKey, newScore] of Object.entries(editingScores)) {
+        const [classId, columnName] = columnKey.split("|");
+        if (!updatesByClass[classId]) {
+          updatesByClass[classId] = {};
+        }
+        updatesByClass[classId][columnName] = newScore;
+      }
 
-        if (recordIndex !== -1) {
-          // Update the score in the attendance record - lưu vào Điểm kiểm tra để đồng bộ
-          updates[`datasheet/Điểm_danh_sessions/${sessionId}/Điểm danh/${recordIndex}/Điểm kiểm tra`] = newScore;
+      // Update each class's custom scores
+      for (const [classId, columnScores] of Object.entries(updatesByClass)) {
+        const classScores = customScoresData[classId];
+        if (!classScores?.scores) continue;
+
+        // Find the student's score index
+        const studentScoreIndex = classScores.scores.findIndex(
+          (s: any) => s.studentId === editingScoresStudent.studentId
+        );
+
+        if (studentScoreIndex !== -1) {
+          // Update each column score
+          for (const [columnName, newScore] of Object.entries(columnScores)) {
+            updates[`datasheet/Điểm_tự_nhập/${classId}/scores/${studentScoreIndex}/${columnName}`] = newScore;
+          }
+        }
+
+        // Also update the session if it exists (for sync)
+        const monthStr = selectedMonth.format("YYYY-MM");
+        for (const [columnName, newScore] of Object.entries(columnScores)) {
+          // Extract date from column name
+          const dateMatch = columnName.match(/\((\d{2}-\d{2}-\d{4})\)$/);
+          if (dateMatch) {
+            const [day, month, year] = dateMatch[1].split("-");
+            const sessionDate = `${year}-${month}-${day}`;
+            
+            // Find matching session
+            const matchingSession = sessions.find(s => 
+              s["Class ID"] === classId && 
+              dayjs(s["Ngày"]).format("YYYY-MM-DD") === sessionDate
+            );
+
+            if (matchingSession) {
+              const attendanceRecords = matchingSession["Điểm danh"] || [];
+              const recordIndex = attendanceRecords.findIndex(
+                (r: any) => r["Student ID"] === editingScoresStudent.studentId
+              );
+              if (recordIndex !== -1) {
+                updates[`datasheet/Điểm_danh_sessions/${matchingSession.id}/Điểm danh/${recordIndex}/Điểm kiểm tra`] = newScore;
+              }
+            }
+          }
         }
       }
 
@@ -1310,15 +1397,45 @@ const TeacherMonthlyReport = () => {
 
             {editingScoresStudent.classIds.map((classId, classIndex) => {
               const monthStr = selectedMonth.format("YYYY-MM");
-              const classSessions = sessions
-                .filter((s) => {
-                  const sessionMonth = dayjs(s["Ngày"]).format("YYYY-MM");
-                  return s["Class ID"] === classId && sessionMonth === monthStr;
-                })
-                .sort((a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime());
+              const classScores = customScoresData[classId];
+              const deletedColumns = classScores?.deletedColumns || [];
+              
+              // Get all score columns for this class in this month
+              const scoreColumns: { columnKey: string; columnName: string; date: string; testName: string }[] = [];
+              
+              if (classScores?.columns) {
+                classScores.columns.forEach((columnName: string) => {
+                  // Skip deleted columns
+                  if (deletedColumns.includes(columnName)) return;
+                  
+                  // Check if column belongs to this month
+                  const dateMatch = columnName.match(/\((\d{2}-\d{2}-\d{4})\)$/);
+                  if (dateMatch) {
+                    const [day, month, year] = dateMatch[1].split("-");
+                    const columnMonth = `${year}-${month}`;
+                    if (columnMonth === monthStr) {
+                      const testName = columnName.replace(/\s*\(\d{2}-\d{2}-\d{4}\)$/, "").trim();
+                      scoreColumns.push({
+                        columnKey: `${classId}|${columnName}`,
+                        columnName,
+                        date: `${year}-${month}-${day}`,
+                        testName: testName || "Điểm",
+                      });
+                    }
+                  }
+                });
+              }
+              
+              // Sort by date
+              scoreColumns.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
 
               const className = editingScoresStudent.classNames[classIndex];
               const classStats = editingScoresStudent.classStats.find(cs => cs.classId === classId);
+
+              // Find student's current scores
+              const studentScore = classScores?.scores?.find(
+                (s: any) => s.studentId === editingScoresStudent.studentId
+              );
 
               return (
                 <div key={classId} style={{ marginBottom: 24 }}>
@@ -1344,73 +1461,61 @@ const TeacherMonthlyReport = () => {
                     </Text>
                   </div>
 
-                  <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-                    <thead>
-                      <tr style={{ background: '#fafafa' }}>
-                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '100px' }}>Ngày</th>
-                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '100px' }}>Chuyên cần</th>
-                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '120px' }}>Điểm hiện tại</th>
-                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '150px' }}>Điểm mới</th>
-                        <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'left' }}>Ghi chú</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {classSessions.map((session) => {
-                        const attendanceRecord = session["Điểm danh"]?.find(
-                          (r: any) => r["Student ID"] === editingScoresStudent.studentId
-                        );
+                  {scoreColumns.length === 0 ? (
+                    <div style={{ textAlign: 'center', color: '#999', padding: 20 }}>
+                      Chưa có cột điểm nào trong tháng này
+                    </div>
+                  ) : (
+                    <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+                      <thead>
+                        <tr style={{ background: '#fafafa' }}>
+                          <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '100px' }}>Ngày</th>
+                          <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'left' }}>Tên cột điểm</th>
+                          <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '120px' }}>Điểm hiện tại</th>
+                          <th style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center', width: '150px' }}>Điểm mới</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {scoreColumns.map((col) => {
+                          const currentScore = studentScore?.[col.columnName] ?? null;
 
-                        if (!attendanceRecord) return null;
-
-                        const currentScore = attendanceRecord["Điểm kiểm tra"] ?? attendanceRecord["Điểm"] ?? null;
-                        const attendance = attendanceRecord["Có mặt"]
-                          ? attendanceRecord["Đi muộn"] ? "Đi muộn" : "Có mặt"
-                          : attendanceRecord["Vắng có phép"] ? "Vắng có phép" : "Vắng";
-                        const attendanceColor = attendanceRecord["Có mặt"]
-                          ? attendanceRecord["Đi muộn"] ? "#fa8c16" : "#52c41a"
-                          : attendanceRecord["Vắng có phép"] ? "#1890ff" : "#ff4d4f";
-
-                        return (
-                          <tr key={session.id}>
-                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
-                              {dayjs(session["Ngày"]).format("DD/MM/YYYY")}
-                            </td>
-                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
-                              <Tag color={attendanceColor} style={{ margin: 0 }}>{attendance}</Tag>
-                            </td>
-                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
-                              <Text strong style={{ fontSize: 14 }}>
-                                {currentScore !== null ? currentScore : '-'}
-                              </Text>
-                            </td>
-                            <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
-                              <Input
-                                type="number"
-                                min={0}
-                                max={10}
-                                step={0.5}
-                                value={editingScores[session.id] ?? ''}
-                                onChange={(e) => {
-                                  const value = e.target.value;
-                                  handleScoreChange(
-                                    session.id,
-                                    value === '' ? null : parseFloat(value)
-                                  );
-                                }}
-                                placeholder="Nhập điểm"
-                                style={{ width: '100%' }}
-                              />
-                            </td>
-                            <td style={{ border: '1px solid #d9d9d9', padding: '8px' }}>
-                              <Text type="secondary" style={{ fontSize: 12 }}>
-                                {attendanceRecord["Ghi chú"] || '-'}
-                              </Text>
-                            </td>
-                          </tr>
-                        );
-                      })}
-                    </tbody>
-                  </table>
+                          return (
+                            <tr key={col.columnKey}>
+                              <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
+                                {dayjs(col.date).format("DD/MM/YYYY")}
+                              </td>
+                              <td style={{ border: '1px solid #d9d9d9', padding: '8px' }}>
+                                {col.testName}
+                              </td>
+                              <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
+                                <Text strong style={{ fontSize: 14 }}>
+                                  {currentScore !== null && currentScore !== undefined ? currentScore : '-'}
+                                </Text>
+                              </td>
+                              <td style={{ border: '1px solid #d9d9d9', padding: '8px', textAlign: 'center' }}>
+                                <Input
+                                  type="number"
+                                  min={0}
+                                  max={10}
+                                  step={0.5}
+                                  value={editingScores[col.columnKey] ?? ''}
+                                  onChange={(e) => {
+                                    const value = e.target.value;
+                                    handleScoreChange(
+                                      col.columnKey,
+                                      value === '' ? null : parseFloat(value)
+                                    );
+                                  }}
+                                  placeholder="Nhập điểm"
+                                  style={{ width: '100%' }}
+                                />
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  )}
                 </div>
               );
             })}

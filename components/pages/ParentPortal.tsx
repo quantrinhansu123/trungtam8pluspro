@@ -67,6 +67,8 @@ const ParentPortal: React.FC = () => {
   const [selectedScheduleEvent, setSelectedScheduleEvent] = useState<any>(null);
   const [scheduleDetailModalOpen, setScheduleDetailModalOpen] = useState(false);
   const [rooms, setRooms] = useState<Map<string, any>>(new Map());
+  const [customScoresData, setCustomScoresData] = useState<any>({}); // Điểm tự nhập từ các lớp
+
 
   // Hour slots for timeline view (6:00 - 22:00)
   const HOUR_SLOTS = Array.from({ length: 17 }, (_, i) => {
@@ -224,6 +226,29 @@ const ParentPortal: React.FC = () => {
           setScheduleEvents(studentSchedule);
         }
 
+        // Fetch custom scores (Điểm tự nhập) for all classes student is in
+        const customScoresRes = await fetch(
+          `${DATABASE_URL_BASE}/datasheet/Điểm_tự_nhập.json`
+        );
+        const customScoresAllData = await customScoresRes.json();
+        if (customScoresAllData) {
+          // Get class IDs that student belongs to
+          const studentClassIds = Object.entries(classesData || {})
+            .filter(([id, cls]: [string, any]) =>
+              cls["Student IDs"]?.includes(userProfile.studentId)
+            )
+            .map(([id]) => id);
+          
+          // Filter custom scores for student's classes
+          const studentCustomScores: any = {};
+          studentClassIds.forEach(classId => {
+            if (customScoresAllData[classId]) {
+              studentCustomScores[classId] = customScoresAllData[classId];
+            }
+          });
+          setCustomScoresData(studentCustomScores);
+        }
+
         setLoading(false);
         console.log("✅ All data loaded successfully");
       } catch (error) {
@@ -245,72 +270,49 @@ const ParentPortal: React.FC = () => {
 
   // Calculate statistics
   const stats = useMemo(() => {
-    // Collect all numeric scores from a record (single + detailed)
-    const collectScores = (record: any) => {
-      const collected: number[] = [];
-
-      // Check all possible score fields: "Điểm kiểm tra", "Điểm", " Điểm"
-      const singleScore = record?.["Điểm kiểm tra"] ?? record?.["Điểm"] ?? record?.[" Điểm"];
-      if (singleScore !== undefined && singleScore !== null && !isNaN(Number(singleScore))) {
-        collected.push(Number(singleScore));
-      }
-
-      const detailedScores = record?.["Chi tiết điểm"];
-      if (Array.isArray(detailedScores)) {
-        detailedScores.forEach((detail: any) => {
-          const scoreValue = detail?.["Điểm"];
-          if (scoreValue !== undefined && scoreValue !== null && !isNaN(Number(scoreValue))) {
-            collected.push(Number(scoreValue));
-          }
-        });
-      }
-
-      return collected;
-    };
-
     const totalSessions = attendanceSessions.length;
     let attendedSessions = 0;
     let lateSessions = 0;
-    let totalScore = 0;
-    let scoredSessions = 0; // số bài/điểm thu được (không chỉ theo buổi)
     let totalBonusPoints = 0;
     let redeemedBonusPoints = 0;
 
-    console.log("📊 ParentPortal Stats - Calculating scores...");
-    console.log("Total attendance sessions:", attendanceSessions.length);
-    console.log("studentId:", userProfile?.studentId);
-
-    attendanceSessions.forEach((session, index) => {
+    // Track attendance from sessions
+    attendanceSessions.forEach((session) => {
       const record = session["Điểm danh"]?.find(
         (r: any) => r["Student ID"] === userProfile?.studentId
       );
 
-      console.log(`Session ${index + 1}:`, {
-        sessionId: session.id,
-        date: session["Ngày"],
-        class: session["Tên lớp"],
-        studentFound: !!record,
-        record: record ? {
-          "Điểm kiểm tra": record["Điểm kiểm tra"],
-          "Điểm": record["Điểm"],
-          " Điểm": record[" Điểm"],
-          "Chi tiết điểm": record["Chi tiết điểm"]
-        } : null
-      });
-
       if (record) {
         if (record["Có mặt"]) attendedSessions++;
         if (record["Đi muộn"]) lateSessions++;
-        const scores = collectScores(record);
-        console.log(`  Collected scores:`, scores);
-        if (scores.length > 0) {
-          totalScore += scores.reduce((a, b) => a + b, 0);
-          scoredSessions += scores.length;
-        }
         // Tính tổng điểm thưởng
         if (record["Điểm thưởng"] !== null && record["Điểm thưởng"] !== undefined) {
           totalBonusPoints += record["Điểm thưởng"];
         }
+      }
+    });
+
+    // Calculate average score from custom scores (Điểm tự nhập) - SINGLE SOURCE OF TRUTH
+    // This is the official grade book
+    let totalScore = 0;
+    let scoreCount = 0;
+
+    // ONLY get scores from Điểm_tự_nhập - không đọc từ sessions nữa
+    Object.entries(customScoresData).forEach(([classId, classScores]: [string, any]) => {
+      if (!classScores?.columns || !classScores?.scores) return;
+      
+      const studentScore = classScores.scores.find(
+        (s: any) => s.studentId === userProfile?.studentId
+      );
+      
+      if (studentScore) {
+        classScores.columns.forEach((columnName: string) => {
+          const scoreValue = studentScore[columnName];
+          if (scoreValue !== null && scoreValue !== undefined && scoreValue !== "" && !isNaN(Number(scoreValue))) {
+            totalScore += Number(scoreValue);
+            scoreCount++;
+          }
+        });
       }
     });
 
@@ -322,7 +324,7 @@ const ParentPortal: React.FC = () => {
 
     const attendanceRate =
       totalSessions > 0 ? (attendedSessions / totalSessions) * 100 : 0;
-    const averageScore = scoredSessions > 0 ? totalScore / scoredSessions : 0;
+    const averageScore = scoreCount > 0 ? totalScore / scoreCount : 0;
 
     return {
       totalSessions,
@@ -331,11 +333,11 @@ const ParentPortal: React.FC = () => {
       absentSessions: totalSessions - attendedSessions,
       attendanceRate,
       averageScore,
-      scoredSessions,
+      scoredSessions: scoreCount,
       totalBonusPoints,
       redeemedBonusPoints,
     };
-  }, [attendanceSessions, redeemHistory, userProfile]);
+  }, [attendanceSessions, customScoresData, redeemHistory, userProfile]);
 
   // Recent sessions
   const recentSessions = useMemo(() => {
@@ -343,6 +345,69 @@ const ParentPortal: React.FC = () => {
       .sort((a, b) => new Date(b["Ngày"]).getTime() - new Date(a["Ngày"]).getTime())
       .slice(0, 10);
   }, [attendanceSessions]);
+
+  // Combine scores from custom scores (Điểm tự nhập) - this is the PRIMARY source
+  // Custom scores already includes scores from sessions that were properly synced
+  const allScoresData = useMemo(() => {
+    const scores: any[] = [];
+    const addedScoreKeys = new Set<string>(); // Track unique scores by classId + columnName
+
+    // 1. ONLY read from custom scores (Điểm tự nhập) - SINGLE SOURCE OF TRUTH
+    // This is the official grade book that teachers manage
+    Object.entries(customScoresData).forEach(([classId, classScores]: [string, any]) => {
+      if (!classScores?.columns || !classScores?.scores) return;
+      
+      const classInfo = classes.find(c => c.id === classId);
+      const className = classInfo?.["Tên lớp"] || "-";
+      
+      // Find this student's scores
+      const studentScore = classScores.scores.find(
+        (s: any) => s.studentId === userProfile?.studentId
+      );
+      
+      if (studentScore) {
+        classScores.columns.forEach((columnName: string) => {
+          const scoreValue = studentScore[columnName];
+          
+          if (scoreValue !== null && scoreValue !== undefined && scoreValue !== "") {
+            // Extract date from column name: "Tên bài (DD-MM-YYYY)"
+            const dateMatch = columnName.match(/\((\d{2}-\d{2}-\d{4})\)$/);
+            let dateStr = "";
+            let testName = columnName;
+            
+            if (dateMatch) {
+              const [day, month, year] = dateMatch[1].split("-");
+              dateStr = `${year}-${month}-${day}`;
+              testName = columnName.replace(/\s*\(\d{2}-\d{2}-\d{4}\)$/, "").trim();
+            }
+            
+            const scoreKey = `${classId}-${columnName}`;
+            if (!addedScoreKeys.has(scoreKey)) {
+              addedScoreKeys.add(scoreKey);
+              scores.push({
+                id: `custom-${scoreKey}`,
+                date: dateStr || "",
+                className,
+                classId,
+                testName: testName || columnName,
+                score: Number(scoreValue),
+                note: "-",
+                source: "custom",
+              });
+            }
+          }
+        });
+      }
+    });
+
+    // Sort by date descending (empty dates go to the end)
+    return scores.sort((a, b) => {
+      if (!a.date && !b.date) return 0;
+      if (!a.date) return 1;
+      if (!b.date) return -1;
+      return new Date(b.date).getTime() - new Date(a.date).getTime();
+    });
+  }, [customScoresData, classes, userProfile?.studentId]);
 
   // Load rooms
   useEffect(() => {
@@ -1123,45 +1188,18 @@ const ParentPortal: React.FC = () => {
                 children: (
                   <div>
                     <Table
-                      dataSource={recentSessions
-                        .map((session) => {
-                          const record = session["Điểm danh"]?.find(
-                            (r: any) => r["Student ID"] === userProfile?.studentId
-                          );
-                          // Check for scores in multiple fields
-                          const hasScore = record && (
-                            record["Điểm"] !== null && record["Điểm"] !== undefined ||
-                            record["Điểm kiểm tra"] !== null && record["Điểm kiểm tra"] !== undefined ||
-                            (record["Chi tiết điểm"] && record["Chi tiết điểm"].length > 0)
-                          );
-                          
-                          if (!hasScore) return null;
-                          
-                          // Use "Điểm kiểm tra" first, then "Điểm" as fallback
-                          const score = record["Điểm kiểm tra"] ?? record["Điểm"];
-                          const testName = record["Bài kiểm tra"] || "-";
-                          const scoreDetails = record["Chi tiết điểm"] || [];
-                          
-                          return {
-                            ...session,
-                            score,
-                            testName,
-                            scoreCount: scoreDetails.length,
-                            note: record["Ghi chú"],
-                            record,
-                          };
-                        })
-                        .filter(Boolean)}
+                      dataSource={allScoresData}
+                      rowKey="id"
                       columns={[
                         {
                           title: "Ngày",
-                          dataIndex: "Ngày",
+                          dataIndex: "date",
                           key: "date",
-                          render: (date) => dayjs(date).format("DD/MM/YYYY"),
+                          render: (date) => date ? dayjs(date).format("DD/MM/YYYY") : "-",
                         },
                         {
                           title: "Lớp học",
-                          dataIndex: "Tên lớp",
+                          dataIndex: "className",
                           key: "class",
                         },
                         {
@@ -1188,69 +1226,12 @@ const ParentPortal: React.FC = () => {
                           ),
                         },
                         {
-                          title: "Chi tiết",
-                          dataIndex: "scoreCount",
-                          key: "scoreCount",
-                          align: "center",
-                          render: (count) => count > 0 ? <Badge count={count} /> : "-",
-                        },
-                        {
                           title: "Ghi chú",
                           dataIndex: "note",
                           key: "note",
                           render: (note) => note || "-",
                         },
                       ]}
-                      expandable={{
-                        expandedRowRender: (record) => {
-                          const scoreDetails = record.record?.["Chi tiết điểm"] || [];
-                          if (scoreDetails.length === 0) return null;
-                          return (
-                            <div style={{ padding: "8px 16px" }}>
-                              <Text strong>Chi tiết điểm:</Text>
-                              <Table
-                                dataSource={scoreDetails}
-                                pagination={false}
-                                size="small"
-                                columns={[
-                                  {
-                                    title: "Tên điểm",
-                                    dataIndex: "Tên điểm",
-                                    key: "name",
-                                  },
-                                  {
-                                    title: "Điểm",
-                                    dataIndex: "Điểm",
-                                    key: "score",
-                                    align: "center",
-                                    render: (score) => (
-                                      <Tag color={score >= 8 ? "green" : score >= 6.5 ? "blue" : score >= 5 ? "orange" : "red"}>
-                                        {score}
-                                      </Tag>
-                                    ),
-                                  },
-                                  {
-                                    title: "Ngày",
-                                    dataIndex: "Ngày",
-                                    key: "date",
-                                    render: (date) => dayjs(date).format("DD/MM/YYYY"),
-                                  },
-                                  {
-                                    title: "Ghi chú",
-                                    dataIndex: "Ghi chú",
-                                    key: "note",
-                                    render: (note) => note || "-",
-                                  },
-                                ]}
-                              />
-                            </div>
-                          );
-                        },
-                        rowExpandable: (record) => {
-                          const scoreDetails = record.record?.["Chi tiết điểm"] || [];
-                          return scoreDetails.length > 0;
-                        },
-                      }}
                       pagination={{ pageSize: 10 }}
                       locale={{ emptyText: "Chưa có điểm kiểm tra nào" }}
                     />
