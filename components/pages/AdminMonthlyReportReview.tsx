@@ -142,6 +142,53 @@ const AdminMonthlyReportReview = () => {
     return () => unsubscribe();
   }, []);
 
+  // Load custom scores (Điểm tự nhập) for all classes
+  const [customScoresData, setCustomScoresData] = useState<{ [classId: string]: any }>({});
+  
+  useEffect(() => {
+    const customScoresRef = ref(database, "datasheet/Điểm_tự_nhập");
+    const unsubscribe = onValue(customScoresRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setCustomScoresData(data);
+      } else {
+        setCustomScoresData({});
+      }
+    });
+    return () => unsubscribe();
+  }, []);
+
+  // Helper: Get custom scores for a student in a class for a specific month
+  const getCustomScoresForClass = (studentId: string, classId: string, monthStr: string): Array<{ date: string; testName: string; score: number }> => {
+    const classScores = customScoresData[classId];
+    if (!classScores?.scores || !classScores?.columns) return [];
+
+    const studentScore = classScores.scores.find((s: any) => s.studentId === studentId);
+    if (!studentScore) return [];
+
+    const scores: Array<{ date: string; testName: string; score: number }> = [];
+    classScores.columns.forEach((columnName: string) => {
+      // Check if column belongs to this month
+      const dateMatch = columnName.match(/\((\d{2}-\d{2}-\d{4})\)$/);
+      if (dateMatch) {
+        const [day, month, year] = dateMatch[1].split("-");
+        const columnMonth = `${year}-${month}`;
+        if (columnMonth === monthStr) {
+          const scoreValue = studentScore[columnName];
+          if (scoreValue !== null && scoreValue !== undefined && scoreValue !== "" && !isNaN(Number(scoreValue))) {
+            const testName = columnName.replace(/\s*\(\d{2}-\d{2}-\d{4}\)$/, "").trim();
+            scores.push({
+              date: `${year}-${month}-${day}`,
+              testName: testName || "Điểm",
+              score: Number(scoreValue),
+            });
+          }
+        }
+      }
+    });
+    return scores.sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+  };
+
   // Filter và MERGE comments theo học sinh - gộp nhiều báo cáo của cùng 1 học sinh thành 1
   const filteredComments = useMemo(() => {
     const monthStr = selectedMonth.format("YYYY-MM");
@@ -381,36 +428,56 @@ const AdminMonthlyReportReview = () => {
       })
       .sort((a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime());
 
-    // Tính lại điểm trung bình từ sessions thực tế để đồng bộ
-    let totalScores: number[] = [];
-    allStudentSessions.forEach((session) => {
-      const record = session["Điểm danh"]?.find((r: any) => r["Student ID"] === comment.studentId);
-      if (record) {
-        const score = record["Điểm kiểm tra"] ?? record["Điểm"];
-        if (score != null && typeof score === 'number') {
-          totalScores.push(score);
-        }
-      }
+    // Get all scores from Điểm_tự_nhập
+    let allCustomScores: Array<{ date: string; testName: string; score: number; classId: string }> = [];
+    classIds.forEach((classId) => {
+      const classScoresArr = getCustomScoresForClass(comment.studentId, classId, monthStr);
+      classScoresArr.forEach((s) => {
+        allCustomScores.push({ ...s, classId });
+      });
     });
-    const recalculatedAvgScore = totalScores.length > 0
-      ? totalScores.reduce((a, b) => a + b, 0) / totalScores.length
+
+    // Tính điểm trung bình từ Điểm_tự_nhập
+    const recalculatedAvgScore = allCustomScores.length > 0
+      ? allCustomScores.reduce((sum, s) => sum + s.score, 0) / allCustomScores.length
       : 0;
 
-    // Generate BẢNG ĐIỂM THEO MÔN - giống ảnh mẫu
-    // Chỉ hiển thị khi có ít nhất 1 điểm
+    // Generate BẢNG ĐIỂM THEO MÔN - đọc từ Điểm_tự_nhập
     let scoreTablesHTML = "";
-    let hasAnyScoreInAnyClass = false; // Biến kiểm tra xem có điểm nào không
+    let hasAnyScoreInAnyClass = false;
     
     classStats.forEach((cs: ClassStats) => {
       const classSessions = allStudentSessions.filter((s) => s["Class ID"] === cs.classId);
+      
+      // Get scores from Điểm_tự_nhập for this class
+      const classScoresFromDB = getCustomScoresForClass(comment.studentId, cs.classId, monthStr);
+      
+      // Build a map of date -> scores (multiple scores per date supported)
+      const scoresByDate: { [date: string]: Array<{ testName: string; score: number }> } = {};
+      classScoresFromDB.forEach((s) => {
+        // Use full YYYY-MM-DD for reliable matching
+        const dateKey = s.date; // Already in YYYY-MM-DD format
+        if (!scoresByDate[dateKey]) {
+          scoresByDate[dateKey] = [];
+        }
+        scoresByDate[dateKey].push({ testName: s.testName, score: s.score });
+      });
 
-      // Tính lại điểm trung bình cho lớp này từ sessions
-      let classScores: number[] = [];
+      // Calculate class average from custom scores
+      const classAvg = classScoresFromDB.length > 0
+        ? classScoresFromDB.reduce((sum, s) => sum + s.score, 0) / classScoresFromDB.length
+        : 0;
+
+      if (classScoresFromDB.length > 0) {
+        hasAnyScoreInAnyClass = true;
+      }
+
       let tableRows = "";
       classSessions.forEach((session) => {
         const record = session["Điểm danh"]?.find((r) => r["Student ID"] === comment.studentId);
         if (record) {
-          const date = dayjs(session["Ngày"]).format("DD/MM");
+          const sessionDate = dayjs(session["Ngày"]).format("YYYY-MM-DD"); // Full date for matching
+          const displayDate = dayjs(session["Ngày"]).format("DD/MM"); // Display format
           const attendance = record["Có mặt"]
             ? record["Đi muộn"] ? "Muộn" : "✓"
             : record["Vắng có phép"] ? "P" : "✗";
@@ -418,25 +485,25 @@ const AdminMonthlyReportReview = () => {
             ? record["Đi muộn"] ? "#fa8c16" : "#52c41a"
             : record["Vắng có phép"] ? "#1890ff" : "#f5222d";
           const homeworkPercent = record["% Hoàn thành BTVN"] ?? "-";
-          const testName = record["Bài kiểm tra"] || "-";
-          const score = record["Điểm kiểm tra"] ?? record["Điểm"] ?? "-";
           const bonusScore = record["Điểm thưởng"] ?? "-";
           const note = record["Ghi chú"] || "-";
 
-          // Thu thập điểm để tính trung bình lớp
-          const numericScore = record["Điểm kiểm tra"] ?? record["Điểm"];
-          if (numericScore != null && typeof numericScore === 'number') {
-            classScores.push(numericScore);
-            hasAnyScoreInAnyClass = true; // Đánh dấu có ít nhất 1 điểm
-          }
+          // Get scores from Điểm_tự_nhập for this date (supports multiple scores per day)
+          const dateScores = scoresByDate[sessionDate] || [];
+          const testNamesStr = dateScores.length > 0 
+            ? dateScores.map(s => s.testName).join(", ")
+            : "-";
+          const scoresStr = dateScores.length > 0 
+            ? dateScores.map(s => s.score).join(", ")
+            : "-";
 
           tableRows += `
             <tr>
-              <td style="text-align: center;">${date}</td>
+              <td style="text-align: center;">${displayDate}</td>
               <td style="text-align: center; color: ${attendanceColor}; font-weight: bold;">${attendance}</td>
               <td style="text-align: center;">${homeworkPercent}${homeworkPercent !== '-' ? '%' : ''}</td>
-              <td style="text-align: left; font-size: 11px;">${testName}</td>
-              <td style="text-align: center; font-weight: bold;">${score}</td>
+              <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
+              <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
               <td style="text-align: center;">${bonusScore}</td>
               <td style="text-align: left; font-size: 10px;">${note}</td>
             </tr>
@@ -444,18 +511,13 @@ const AdminMonthlyReportReview = () => {
         }
       });
 
-      // Tính điểm trung bình lớp từ sessions thực tế
-      const recalculatedClassAvg = classScores.length > 0
-        ? classScores.reduce((a, b) => a + b, 0) / classScores.length
-        : 0;
-
-      // Chỉ thêm bảng điểm cho lớp này nếu có ít nhất 1 điểm
-      if (classScores.length > 0) {
+      // Chỉ thêm bảng điểm cho lớp này nếu có ít nhất 1 điểm hoặc có sessions
+      if (classScoresFromDB.length > 0 || classSessions.length > 0) {
         scoreTablesHTML += `
           <div class="subject-section">
             <div class="subject-header">
               <span class="subject-name">📚 ${cs.className} ${cs.subject ? `(${cs.subject})` : ""}</span>
-              <span class="subject-avg">TB: <strong>${recalculatedClassAvg > 0 ? recalculatedClassAvg.toFixed(1) : "-"}</strong></span>
+              <span class="subject-avg">TB: <strong>${classAvg > 0 ? classAvg.toFixed(1) : "-"}</strong></span>
             </div>
             <table class="score-table">
               <thead>
@@ -484,12 +546,13 @@ const AdminMonthlyReportReview = () => {
       }
     });
 
-    // Generate LỊCH SỬ HỌC TẬP CHI TIẾT - giống ảnh mẫu
+    // Generate LỊCH SỬ HỌC TẬP CHI TIẾT - đọc từ Điểm_tự_nhập
     let historyTableRows = "";
     allStudentSessions.forEach((session) => {
       const record = session["Điểm danh"]?.find((r) => r["Student ID"] === comment.studentId);
       if (record) {
-        const date = dayjs(session["Ngày"]).format("DD/MM/YYYY");
+        const sessionDate = dayjs(session["Ngày"]).format("YYYY-MM-DD"); // Full date for matching
+        const dateFormatted = dayjs(session["Ngày"]).format("DD/MM/YYYY");
         const classInfo = classes.find((c) => c.id === session["Class ID"]);
         const className = classInfo?.["Tên lớp"] || session["Tên lớp"] || "-";
         const timeRange = `${session["Giờ bắt đầu"]} - ${session["Giờ kết thúc"]}`;
@@ -499,18 +562,27 @@ const AdminMonthlyReportReview = () => {
         const attendanceColor = record["Có mặt"]
           ? record["Đi muộn"] ? "#fa8c16" : "#52c41a"
           : record["Vắng có phép"] ? "#1890ff" : "#f5222d";
-        const score = record["Điểm kiểm tra"] ?? record["Điểm"] ?? "-";
-        const testName = record["Bài kiểm tra"] || "-";
         const note = record["Ghi chú"] || "-";
+
+        // Get scores from Điểm_tự_nhập for this date and class (supports multiple scores per day)
+        const dateScores = allCustomScores.filter((s) => {
+          return s.date === sessionDate && s.classId === session["Class ID"];
+        });
+        const testNamesStr = dateScores.length > 0 
+          ? dateScores.map(s => s.testName).join(", ")
+          : "-";
+        const scoresStr = dateScores.length > 0 
+          ? dateScores.map(s => s.score).join(", ")
+          : "-";
 
         historyTableRows += `
           <tr>
-            <td style="text-align: center;">${date}</td>
+            <td style="text-align: center;">${dateFormatted}</td>
             <td style="text-align: left;">${className}</td>
             <td style="text-align: center;">${timeRange}</td>
             <td style="text-align: center; color: ${attendanceColor}; font-weight: 500;">${attendance}</td>
-            <td style="text-align: center; font-weight: bold;">${score}</td>
-            <td style="text-align: left; font-size: 11px;">${testName}</td>
+            <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
+            <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
             <td style="text-align: left; font-size: 10px;">${note}</td>
           </tr>
         `;

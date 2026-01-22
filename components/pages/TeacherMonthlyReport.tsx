@@ -238,6 +238,32 @@ const TeacherMonthlyReport = () => {
     return Array.from(studentIdSet);
   }, [classes]);
 
+  // Helper: Get custom scores for a student in a class for a specific month
+  const getCustomScoresForClass = (studentId: string, classId: string, monthStr: string): number[] => {
+    const classScores = customScoresData[classId];
+    if (!classScores?.scores || !classScores?.columns) return [];
+
+    const studentScore = classScores.scores.find((s: any) => s.studentId === studentId);
+    if (!studentScore) return [];
+
+    const scores: number[] = [];
+    classScores.columns.forEach((columnName: string) => {
+      // Check if column belongs to this month
+      const dateMatch = columnName.match(/\((\d{2}-\d{2}-\d{4})\)$/);
+      if (dateMatch) {
+        const [day, month, year] = dateMatch[1].split("-");
+        const columnMonth = `${year}-${month}`;
+        if (columnMonth === monthStr) {
+          const scoreValue = studentScore[columnName];
+          if (scoreValue !== null && scoreValue !== undefined && scoreValue !== "" && !isNaN(Number(scoreValue))) {
+            scores.push(Number(scoreValue));
+          }
+        }
+      }
+    });
+    return scores;
+  };
+
   // Calculate report data - THEO HỌC SINH (gộp nhiều lớp)
   useEffect(() => {
     if (!selectedMonth || classes.length === 0) {
@@ -277,7 +303,6 @@ const TeacherMonthlyReport = () => {
 
         let clsTotal = 0;
         let clsPresent = 0;
-        let clsScores: number[] = [];
         let clsBonusPoints = 0;
 
         classSessions.forEach((session) => {
@@ -287,12 +312,6 @@ const TeacherMonthlyReport = () => {
             if (record["Có mặt"]) {
               clsPresent++;
             }
-            // Ưu tiên điểm kiểm tra, nếu không có thì dùng điểm bài tập
-            const score = record["Điểm kiểm tra"] ?? record["Điểm"];
-            if (score != null) {
-              clsScores.push(score);
-              allScores.push(score);
-            }
             if (record["Điểm thưởng"]) {
               clsBonusPoints += record["Điểm thưởng"];
               totalBonusPoints += record["Điểm thưởng"];
@@ -300,13 +319,17 @@ const TeacherMonthlyReport = () => {
           }
         });
 
+        // Get scores from Điểm_tự_nhập instead of sessions
+        const clsScores = getCustomScoresForClass(studentId, cls.id, monthStr);
+        allScores = allScores.concat(clsScores);
+
         const clsAbsent = clsTotal - clsPresent;
         const clsAttendanceRate = clsTotal > 0 ? Math.round((clsPresent / clsTotal) * 100) : 0;
         const clsAvgScore = clsScores.length > 0
           ? clsScores.reduce((a, b) => a + b, 0) / clsScores.length
           : 0;
 
-        if (clsTotal > 0) {
+        if (clsTotal > 0 || clsScores.length > 0) {
           classStats.push({
             classId: cls.id,
             className: cls["Tên lớp"],
@@ -362,10 +385,10 @@ const TeacherMonthlyReport = () => {
         status,
         existingCommentId: existingComment?.id,
       } as StudentReportRow;
-    }).filter((row): row is StudentReportRow => row.totalSessions > 0);
+    }).filter((row): row is StudentReportRow => row.totalSessions > 0 || row.classStats.some(cs => cs.averageScore > 0));
 
     setReportData(data);
-  }, [classes, selectedMonth, sessions, students, existingComments, uniqueStudentIds]);
+  }, [classes, selectedMonth, sessions, students, existingComments, uniqueStudentIds, customScoresData]);
 
   // Check if report can be edited
   const canEdit = (status: string) => {

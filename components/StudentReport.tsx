@@ -462,8 +462,8 @@ const StudentReport = ({
       scoresByClass[className].push(score);
     });
 
-    // Generate score tables by subject - combining attendance and scores
-    let scoreTablesHTML = "";
+    // Generate content by subject - Group: Bảng điểm → Nhận xét → Lịch sử
+    let subjectContentsHTML = "";
     
     // Get all unique subjects from both sessions and scores
     const allSubjects = new Set([
@@ -497,7 +497,8 @@ const StudentReport = ({
         scoresByDate[dateKey].push({ testName: s.testName, score: s.score });
       });
 
-      let tableRows = "";
+      // 1. BẢNG ĐIỂM
+      let scoreTableRows = "";
       sortedSessions.forEach((session) => {
         const studentRecord = session["Điểm danh"]?.find(
           (r) => r["Student ID"] === student.id
@@ -527,7 +528,7 @@ const StudentReport = ({
             ? dateScores.map(s => s.score).join(", ")
             : "-";
 
-          tableRows += `
+          scoreTableRows += `
             <tr>
               <td style="text-align: center;">${date}</td>
               <td style="text-align: center; color: ${attendanceColor}; font-weight: bold;">${attendance}</td>
@@ -542,33 +543,99 @@ const StudentReport = ({
         }
       });
 
-      scoreTablesHTML += `
-        <div class="subject-section">
+      // 2. LỊCH SỬ HỌC TẬP CHI TIẾT cho môn này
+      let historyTableRows = "";
+      sortedSessions.forEach((session) => {
+        const studentRecord = session["Điểm danh"]?.find(
+          (r) => r["Student ID"] === student.id
+        );
+        if (studentRecord) {
+          const dateFormatted = dayjs(session["Ngày"]).format("DD/MM/YYYY");
+          const dateShort = dayjs(session["Ngày"]).format("DD/MM");
+          const className = session["Tên lớp"] || "-";
+          const timeRange = `${session["Giờ bắt đầu"]} - ${session["Giờ kết thúc"]}`;
+          const statusText = getStatusText(studentRecord);
+          const statusColor = getStatusColor(studentRecord);
+          const note = studentRecord["Ghi chú"] || "-";
+
+          // Get scores from Điểm_tự_nhập for this date
+          const dateScores = scoresByDate[dateShort] || [];
+          const testNamesStr = dateScores.length > 0 
+            ? dateScores.map(s => s.testName).join(", ")
+            : "-";
+          const scoresStr = dateScores.length > 0 
+            ? dateScores.map(s => s.score).join(", ")
+            : "-";
+
+          historyTableRows += `
+            <tr>
+              <td style="text-align: center;">${dateFormatted}</td>
+              <td style="text-align: left;">${className}</td>
+              <td style="text-align: center;">${timeRange}</td>
+              <td style="text-align: center; color: ${statusColor}; font-weight: 500;">${statusText}</td>
+              <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
+              <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
+              <td style="text-align: left; font-size: 10px;">${note}</td>
+            </tr>
+          `;
+        }
+      });
+
+      // Combine: Subject Header → Score Table → Comment → History Table
+      subjectContentsHTML += `
+        <div class="subject-section" style="page-break-inside: avoid; margin-bottom: 25px;">
           <div class="subject-header">
-            <span class="subject-name">📚 ${subject}</span>
+            <span class="subject-name">📚 Môn ${subject}</span>
             <span class="subject-avg">TB: <strong>${subjectAvg}</strong></span>
           </div>
-          <table class="score-table">
-            <thead>
-              <tr>
-                <th style="width: 50px;">Ngày</th>
-                <th style="width: 60px;">Chuyên cần</th>
-                <th style="width: 55px;">% BTVN</th>
-                <th style="width: 110px;">Tên bài KT</th>
-                <th style="width: 45px;">Điểm</th>
-                <th style="width: 60px;">Điểm thưởng</th>
-                <th style="width: 55px;">Bài tập</th>
-                <th>Ghi chú</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${tableRows}
-            </tbody>
-          </table>
+          
+          <div style="margin-bottom: 12px;">
+            <div style="font-weight: 600; color: #004aad; font-size: 12px; margin-bottom: 6px;">📊 Bảng điểm</div>
+            <table class="score-table">
+              <thead>
+                <tr>
+                  <th style="width: 50px;">Ngày</th>
+                  <th style="width: 60px;">Chuyên cần</th>
+                  <th style="width: 55px;">% BTVN</th>
+                  <th style="width: 110px;">Tên bài KT</th>
+                  <th style="width: 45px;">Điểm</th>
+                  <th style="width: 60px;">Điểm thưởng</th>
+                  <th style="width: 55px;">Bài tập</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${scoreTableRows || '<tr><td colspan="8" style="text-align: center; color: #999;">Không có dữ liệu</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+
           ${subjectComment ? `
-          <div class="subject-comment">
-            <div class="comment-label">📝 Nhận xét:</div>
+          <div class="subject-comment" style="margin-bottom: 12px;">
+            <div class="comment-label">📝 Nhận xét</div>
             <div class="comment-content">${subjectComment.replace(/\n/g, "<br/>")}</div>
+          </div>
+          ` : ''}
+
+          ${historyTableRows ? `
+          <div style="margin-top: 12px;">
+            <div style="font-weight: 600; color: #004aad; font-size: 12px; margin-bottom: 6px;">📋 Lịch sử học tập chi tiết</div>
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">Ngày</th>
+                  <th style="width: 150px;">Lớp học</th>
+                  <th style="width: 80px;">Giờ học</th>
+                  <th style="width: 80px;">Trạng thái</th>
+                  <th style="width: 50px;">Điểm</th>
+                  <th style="width: 120px;">Bài kiểm tra</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${historyTableRows}
+              </tbody>
+            </table>
           </div>
           ` : ''}
         </div>
@@ -579,36 +646,6 @@ const StudentReport = ({
     const uniqueClasses = Array.from(
       new Set(filteredSessions.map((s) => s["Tên lớp"] || ""))
     ).filter((name) => name);
-
-    // Generate history table
-    let historyTableRows = "";
-    filteredSessions.forEach((session) => {
-      const studentRecord = session["Điểm danh"]?.find(
-        (r) => r["Student ID"] === student.id
-      );
-      if (studentRecord) {
-        const date = dayjs(session["Ngày"]).format("DD/MM/YYYY");
-        const className = session["Tên lớp"] || "-";
-        const timeRange = `${session["Giờ bắt đầu"]} - ${session["Giờ kết thúc"]}`;
-        const statusText = getStatusText(studentRecord);
-        const statusColor = getStatusColor(studentRecord);
-        const score = studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-";
-        const testName = studentRecord["Bài kiểm tra"] || "-";
-        const note = studentRecord["Ghi chú"] || "-";
-
-        historyTableRows += `
-          <tr>
-            <td style="text-align: center;">${date}</td>
-            <td style="text-align: left;">${className}</td>
-            <td style="text-align: center;">${timeRange}</td>
-            <td style="text-align: center; color: ${statusColor}; font-weight: 500;">${statusText}</td>
-            <td style="text-align: center; font-weight: bold;">${score}</td>
-            <td style="text-align: left; font-size: 11px;">${testName}</td>
-            <td style="text-align: left; font-size: 10px;">${note}</td>
-          </tr>
-        `;
-      }
-    });
 
     return `
       <!DOCTYPE html>
@@ -818,8 +855,8 @@ const StudentReport = ({
               </div>
 
               <div class="section">
-                <div class="section-title">Bảng điểm theo môn</div>
-                ${scoreTablesHTML || '<p style="color: #999; text-align: center;">Không có dữ liệu điểm trong tháng này</p>'}
+                <div class="section-title">Chi tiết theo môn học</div>
+                ${subjectContentsHTML || '<p style="color: #999; text-align: center;">Không có dữ liệu trong tháng này</p>'}
               </div>
 
               <div class="footer">
@@ -892,7 +929,9 @@ const StudentReport = ({
       ...Object.keys(scoresByClass),
     ]);
 
-    let scoreTablesHTML = "";
+    // Generate content grouped by subject: Bảng điểm → Nhận xét → Lịch sử
+    let subjectContentsHTML = "";
+    
     allSubjects.forEach((subject) => {
       const subjectSessions = sessionsBySubject[subject] || [];
       const subjectScoresFromDB = scoresByClass[subject] || [];
@@ -906,6 +945,9 @@ const StudentReport = ({
         ? (subjectScoresFromDB.reduce((sum, s) => sum + s.score, 0) / subjectScoresFromDB.length).toFixed(1)
         : "-";
 
+      // Get comment for this subject
+      const subjectComment = getClassComment(subject);
+
       // Build a map of date -> scores
       const scoresByDate: { [date: string]: Array<{ testName: string; score: number }> } = {};
       subjectScoresFromDB.forEach((s) => {
@@ -916,7 +958,8 @@ const StudentReport = ({
         scoresByDate[dateKey].push({ testName: s.testName, score: s.score });
       });
 
-      let tableRows = "";
+      // 1. BẢNG ĐIỂM
+      let scoreTableRows = "";
       sortedSessions.forEach((session) => {
         const studentRecord = session["Điểm danh"]?.find(
           (r) => r["Student ID"] === student.id
@@ -946,7 +989,7 @@ const StudentReport = ({
             ? dateScores.map(s => s.score).join(", ")
             : "-";
 
-          tableRows += `
+          scoreTableRows += `
             <tr>
               <td style="text-align: center;">${date}</td>
               <td style="text-align: center; color: ${attendanceColor}; font-weight: bold;">${attendance}</td>
@@ -961,73 +1004,101 @@ const StudentReport = ({
         }
       });
 
-      scoreTablesHTML += `
-        <div class="subject-section">
+      // 2. LỊCH SỬ HỌC TẬP cho môn này
+      let historyTableRows = "";
+      sortedSessions.forEach((session) => {
+        const studentRecord = session["Điểm danh"]?.find(
+          (r) => r["Student ID"] === student.id
+        );
+        if (studentRecord) {
+          const dateFormatted = dayjs(session["Ngày"]).format("DD/MM/YYYY");
+          const dateShort = dayjs(session["Ngày"]).format("DD/MM");
+          const className = session["Tên lớp"] || "-";
+          const timeRange = `${session["Giờ bắt đầu"]} - ${session["Giờ kết thúc"]}`;
+          const statusText = getStatusText(studentRecord);
+          const statusColor = getStatusColor(studentRecord);
+          const note = studentRecord["Ghi chú"] || "-";
+
+          // Get scores from Điểm_tự_nhập for this date
+          const dateScores = scoresByDate[dateShort] || [];
+          const testNamesStr = dateScores.length > 0 
+            ? dateScores.map(s => s.testName).join(", ")
+            : "-";
+          const scoresStr = dateScores.length > 0 
+            ? dateScores.map(s => s.score).join(", ")
+            : "-";
+
+          historyTableRows += `
+            <tr>
+              <td style="text-align: center;">${dateFormatted}</td>
+              <td style="text-align: left;">${className}</td>
+              <td style="text-align: center;">${timeRange}</td>
+              <td style="text-align: center; color: ${statusColor}; font-weight: 500;">${statusText}</td>
+              <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
+              <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
+              <td style="text-align: left; font-size: 10px;">${note}</td>
+            </tr>
+          `;
+        }
+      });
+
+      // Combine: Subject Header → Score Table → Comment → History Table
+      subjectContentsHTML += `
+        <div class="subject-section" style="page-break-inside: avoid; margin-bottom: 25px;">
           <div class="subject-header">
             <span class="subject-name">📚 ${subject}</span>
             <span class="subject-avg">TB: <strong>${subjectAvg}</strong></span>
           </div>
-          <table class="score-table">
-            <thead>
-              <tr>
-                <th style="width: 50px;">Ngày</th>
-                <th style="width: 60px;">Chuyên cần</th>
-                <th style="width: 55px;">% BTVN</th>
-                <th style="width: 110px;">Tên bài KT</th>
-                <th style="width: 45px;">Điểm</th>
-                <th style="width: 60px;">Điểm thưởng</th>
-                <th style="width: 55px;">Bài tập</th>
-                <th>Ghi chú</th>
-              </tr>
-            </thead>
-            <tbody>
-              ${tableRows}
-            </tbody>
-          </table>
+          
+          <div style="margin-bottom: 12px;">
+            <div style="font-weight: 600; color: #004aad; font-size: 12px; margin-bottom: 6px;">📊 Bảng điểm</div>
+            <table class="score-table">
+              <thead>
+                <tr>
+                  <th style="width: 50px;">Ngày</th>
+                  <th style="width: 60px;">Chuyên cần</th>
+                  <th style="width: 55px;">% BTVN</th>
+                  <th style="width: 110px;">Tên bài KT</th>
+                  <th style="width: 45px;">Điểm</th>
+                  <th style="width: 60px;">Điểm thưởng</th>
+                  <th style="width: 55px;">Bài tập</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${scoreTableRows || '<tr><td colspan="8" style="text-align: center; color: #999;">Chưa có dữ liệu</td></tr>'}
+              </tbody>
+            </table>
+          </div>
+
+          ${subjectComment ? `
+            <div style="background: rgba(240, 250, 235, 0.4); border-left: 4px solid rgba(82, 196, 26, 0.7); padding: 12px 15px; margin: 12px 0; border-radius: 4px;">
+              <div style="font-weight: 600; font-size: 12px; color: #389e0d; margin-bottom: 6px;">📝 Nhận xét:</div>
+              <div style="font-size: 11px; line-height: 1.6; color: #333; white-space: pre-wrap;">${subjectComment}</div>
+            </div>
+          ` : ''}
+
+          <div style="margin-top: 12px;">
+            <div style="font-weight: 600; color: #004aad; font-size: 12px; margin-bottom: 6px;">📚 Lịch sử học tập</div>
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th style="width: 80px;">Ngày</th>
+                  <th>Lớp</th>
+                  <th style="width: 90px;">Thời gian</th>
+                  <th style="width: 90px;">Chuyên cần</th>
+                  <th style="width: 50px;">Điểm</th>
+                  <th style="width: 110px;">Tên bài KT</th>
+                  <th>Ghi chú</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${historyTableRows || '<tr><td colspan="7" style="text-align: center; color: #999;">Chưa có dữ liệu</td></tr>'}
+              </tbody>
+            </table>
+          </div>
         </div>
       `;
-    });
-
-    // Generate history table - also use Điểm_tự_nhập
-    let historyTableRows = "";
-    studentSessions.forEach((session) => {
-      const studentRecord = session["Điểm danh"]?.find(
-        (r) => r["Student ID"] === student.id
-      );
-      if (studentRecord) {
-        const dateFormatted = dayjs(session["Ngày"]).format("DD/MM/YYYY");
-        const dateShort = dayjs(session["Ngày"]).format("DD/MM");
-        const className = session["Tên lớp"] || "-";
-        const subjectName = className.split(" - ")[0] || className;
-        const timeRange = `${session["Giờ bắt đầu"]} - ${session["Giờ kết thúc"]}`;
-        const statusText = getStatusText(studentRecord);
-        const statusColor = getStatusColor(studentRecord);
-        const note = studentRecord["Ghi chú"] || "-";
-
-        // Get scores from Điểm_tự_nhập for this date and class
-        const dateScores = allCustomScores.filter((s) => {
-          const scoreDate = dayjs(s.date).format("DD/MM");
-          return scoreDate === dateShort && s.className?.includes(subjectName);
-        });
-        const testNamesStr = dateScores.length > 0 
-          ? dateScores.map(s => s.testName).join(", ")
-          : "-";
-        const scoresStr = dateScores.length > 0 
-          ? dateScores.map(s => s.score).join(", ")
-          : "-";
-
-        historyTableRows += `
-          <tr>
-            <td style="text-align: center;">${dateFormatted}</td>
-            <td style="text-align: left;">${className}</td>
-            <td style="text-align: center;">${timeRange}</td>
-            <td style="text-align: center; color: ${statusColor}; font-weight: 500;">${statusText}</td>
-            <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
-            <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
-            <td style="text-align: left; font-size: 10px;">${note}</td>
-          </tr>
-        `;
-      }
     });
 
     return `
@@ -1220,8 +1291,8 @@ const StudentReport = ({
               </div>
 
               <div class="section">
-                <div class="section-title">Bảng điểm theo môn</div>
-                ${scoreTablesHTML || '<p style="color: #999; text-align: center;">Không có dữ liệu</p>'}
+                <div class="section-title">Chi tiết theo môn học</div>
+                ${subjectContentsHTML || '<p style="color: #999; text-align: center;">Không có dữ liệu</p>'}
               </div>
 
               <div class="footer">
@@ -1401,8 +1472,10 @@ const StudentReport = ({
   };
 
   const handlePrintScoreTable = () => {
-    // Group sessions by subject
-    const sessionsBySubject: { [subject: string]: AttendanceSession[] } = {};
+    const printWindow = window.open("", "_blank");
+    if (!printWindow) return;
+
+    // Filter sessions by selected month
     const sessionsToExport = viewMode === "monthly" && selectedMonth
       ? studentSessions.filter((session) => {
           const sessionDate = dayjs(session["Ngày"]);
@@ -1413,6 +1486,8 @@ const StudentReport = ({
         })
       : studentSessions;
 
+    // Group sessions by subject for history
+    const sessionsBySubject: { [subject: string]: AttendanceSession[] } = {};
     sessionsToExport.forEach((session) => {
       const subject = session["Tên lớp"]?.split(" - ")[0] || "Chưa phân loại";
       if (!sessionsBySubject[subject]) {
@@ -1421,16 +1496,88 @@ const StudentReport = ({
       sessionsBySubject[subject].push(session);
     });
 
-    const printWindow = window.open("", "_blank");
-    if (!printWindow) return;
+    // Get scores from Điểm_tự_nhập for selected month
+    const allCustomScores = getCustomScoresForStudent(student.id);
+    const monthScoresFiltered = viewMode === "monthly" && selectedMonth
+      ? allCustomScores.filter((s) => {
+          if (!s.date) return false;
+          const scoreDate = dayjs(s.date);
+          return (
+            scoreDate.month() === selectedMonth.month() &&
+            scoreDate.year() === selectedMonth.year()
+          );
+        })
+      : allCustomScores;
 
-    let tablesHTML = "";
-    Object.entries(sessionsBySubject).forEach(([subject, subjectSessions]) => {
+    // Group scores by className
+    const scoresByClass: { [className: string]: typeof monthScoresFiltered } = {};
+    monthScoresFiltered.forEach((score) => {
+      const className = score.className?.split(" - ")[0] || score.className || "Chưa phân loại";
+      if (!scoresByClass[className]) {
+        scoresByClass[className] = [];
+      }
+      scoresByClass[className].push(score);
+    });
+
+    // Get all unique subjects
+    const allSubjects = new Set([
+      ...Object.keys(sessionsBySubject),
+      ...Object.keys(scoresByClass),
+    ]);
+
+    // Build HTML grouped by subject
+    let subjectContentsHTML = "";
+    
+    Array.from(allSubjects).forEach((subject) => {
+      const subjectSessions = sessionsBySubject[subject] || [];
+      const subjectScoresFromDB = scoresByClass[subject] || [];
+      
+      // Calculate subject average
+      const subjectAvg = subjectScoresFromDB.length > 0
+        ? (subjectScoresFromDB.reduce((sum, s) => sum + s.score, 0) / subjectScoresFromDB.length).toFixed(1)
+        : "-";
+
+      // Get comment for this subject
+      const subjectComment = getClassComment(subject);
+
+      // Build a map of date -> scores for this subject
+      const scoresByDate: { [date: string]: Array<{ testName: string; score: number }> } = {};
+      subjectScoresFromDB.forEach((s) => {
+        const dateKey = dayjs(s.date).format("DD/MM/YYYY");
+        if (!scoresByDate[dateKey]) {
+          scoresByDate[dateKey] = [];
+        }
+        scoresByDate[dateKey].push({ testName: s.testName, score: s.score });
+      });
+
+      // Sort sessions by date
       const sortedSessions = [...subjectSessions].sort(
         (a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime()
       );
 
-      let tableRows = "";
+      // Build score table for this subject
+      let scoreTableRows = "";
+      Object.entries(scoresByDate)
+        .sort((a, b) => {
+          const dateA = dayjs(a[0], "DD/MM/YYYY");
+          const dateB = dayjs(b[0], "DD/MM/YYYY");
+          return dateA.isBefore(dateB) ? -1 : 1;
+        })
+        .forEach(([date, scores]) => {
+          const testNames = scores.map((s) => s.testName).join(", ");
+          const scoresStr = scores.map((s) => s.score).join(", ");
+          
+          scoreTableRows += `
+            <tr>
+              <td>${date}</td>
+              <td style="text-align: left;">${testNames}</td>
+              <td><strong>${scoresStr}</strong></td>
+            </tr>
+          `;
+        });
+
+      // Build history table for this subject
+      let historyTableRows = "";
       sortedSessions.forEach((session) => {
         const studentRecord = session["Điểm danh"]?.find(
           (r) => r["Student ID"] === student.id
@@ -1438,24 +1585,18 @@ const StudentReport = ({
         
         if (studentRecord) {
           const date = dayjs(session["Ngày"]).format("DD/MM/YYYY");
-          const studentName = student["Họ và tên"];
           const attendance = studentRecord["Có mặt"] 
             ? (studentRecord["Đi muộn"] ? "Đi muộn" : "Có mặt")
             : (studentRecord["Vắng có phép"] ? "Vắng có phép" : "Vắng");
-          const homeworkPercent = studentRecord["% Hoàn thành BTVN"] ?? "";
-          const testName = studentRecord["Bài kiểm tra"] || "";
-          const score = studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "";
-          const bonusScore = studentRecord["Điểm thưởng"] ?? "";
-          const note = studentRecord["Ghi chú"] || "";
+          const homeworkPercent = studentRecord["% Hoàn thành BTVN"] ?? "-";
+          const bonusScore = studentRecord["Điểm thưởng"] ?? "-";
+          const note = studentRecord["Ghi chú"] || "-";
 
-          tableRows += `
+          historyTableRows += `
             <tr>
               <td>${date}</td>
-              <td>${studentName}</td>
               <td>${attendance}</td>
               <td>${homeworkPercent}</td>
-              <td>${testName}</td>
-              <td><strong>${score}</strong></td>
               <td>${bonusScore}</td>
               <td style="text-align: left;">${note}</td>
             </tr>
@@ -1463,25 +1604,51 @@ const StudentReport = ({
         }
       });
 
-      tablesHTML += `
-        <div class="subject-header">Môn ${subject}</div>
-        <table>
-          <thead>
-            <tr>
-              <th>Ngày</th>
-              <th>Tên HS</th>
-              <th>Chuyên cần</th>
-              <th>% BTVN</th>
-              <th>Tên bài kiểm tra</th>
-              <th>Điểm</th>
-              <th>Điểm thưởng</th>
-              <th>Nhận xét</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${tableRows}
-          </tbody>
-        </table>
+      // Build this subject's section
+      subjectContentsHTML += `
+        <div class="subject-section">
+          <div class="subject-header">Môn ${subject} <span style="float: right; font-size: 13px; color: #1890ff;">Điểm TB: ${subjectAvg}</span></div>
+          
+          <!-- Score Table -->
+          <div class="section-title">📊 Bảng điểm</div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 20%">Ngày</th>
+                <th style="width: 50%">Tên bài kiểm tra</th>
+                <th style="width: 30%">Điểm</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${scoreTableRows || '<tr><td colspan="3">Chưa có điểm</td></tr>'}
+            </tbody>
+          </table>
+
+          <!-- Comment -->
+          ${subjectComment ? `
+            <div class="comment-box">
+              <div class="comment-title">📝 Nhận xét:</div>
+              <div class="comment-content">${subjectComment}</div>
+            </div>
+          ` : ''}
+
+          <!-- History Table -->
+          <div class="section-title">📚 Lịch sử học tập</div>
+          <table>
+            <thead>
+              <tr>
+                <th style="width: 15%">Ngày</th>
+                <th style="width: 15%">Chuyên cần</th>
+                <th style="width: 15%">% BTVN</th>
+                <th style="width: 15%">Điểm thưởng</th>
+                <th style="width: 40%">Nhận xét</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${historyTableRows || '<tr><td colspan="5">Chưa có lịch sử</td></tr>'}
+            </tbody>
+          </table>
+        </div>
       `;
     });
 
@@ -1490,7 +1657,7 @@ const StudentReport = ({
       <html>
         <head>
           <meta charset="UTF-8">
-          <title>Bảng điểm - ${student["Họ và tên"]}</title>
+          <title>Báo cáo học tập - ${student["Họ và tên"]}</title>
           <style>
             @page {
               size: A4 landscape;
@@ -1515,10 +1682,31 @@ const StudentReport = ({
               margin-bottom: 20px;
               color: #666;
             }
+            .subject-section {
+              page-break-inside: avoid;
+              margin-bottom: 30px;
+            }
+            .subject-header {
+              background: #e6f7ff;
+              font-weight: bold;
+              font-size: 14px;
+              text-align: left;
+              padding: 10px;
+              margin-bottom: 15px;
+              border-left: 4px solid #1890ff;
+            }
+            .section-title {
+              font-weight: bold;
+              font-size: 13px;
+              color: #333;
+              margin-top: 15px;
+              margin-bottom: 8px;
+              padding-left: 5px;
+            }
             table {
               width: 100%;
               border-collapse: collapse;
-              margin-bottom: 30px;
+              margin-bottom: 15px;
             }
             th, td {
               border: 1px solid #000;
@@ -1530,14 +1718,24 @@ const StudentReport = ({
               background: #f0f0f0;
               font-weight: bold;
             }
-            .subject-header {
-              background: #e6f7ff;
+            .comment-box {
+              background: rgba(240, 250, 235, 0.4);
+              border-left: 4px solid rgba(82, 196, 26, 0.7);
+              padding: 12px 15px;
+              margin: 15px 0;
+              border-radius: 4px;
+            }
+            .comment-title {
               font-weight: bold;
-              font-size: 14px;
-              text-align: left;
-              padding: 10px;
-              margin-top: 20px;
-              border-left: 4px solid #1890ff;
+              font-size: 12px;
+              color: #389e0d;
+              margin-bottom: 6px;
+            }
+            .comment-content {
+              font-size: 11px;
+              line-height: 1.6;
+              color: #333;
+              white-space: pre-wrap;
             }
             @media print {
               button {
@@ -1547,14 +1745,15 @@ const StudentReport = ({
           </style>
         </head>
         <body>
-          <h1>BẢNG ĐIỂM CHI TIẾT</h1>
+          <h1>BÁO CÁO HỌC TẬP CHI TIẾT</h1>
           <h2>Trung tâm Trí Tuệ 8+</h2>
           <div class="info">
             <p><strong>Học sinh:</strong> ${student["Họ và tên"]}</p>
+            <p><strong>Kỳ báo cáo:</strong> ${viewMode === "monthly" && selectedMonth ? selectedMonth.format("Tháng MM/YYYY") : "Tất cả"}</p>
             <p>Ngày xuất: ${dayjs().format("DD/MM/YYYY HH:mm")}</p>
           </div>
           
-          ${tablesHTML}
+          ${subjectContentsHTML}
           
           <script>
             window.onload = function() {
@@ -1938,6 +2137,88 @@ const StudentReport = ({
                           </div>
                         </div>
                       )}
+
+                      {/* Subject History - Lịch sử học tập cho môn này */}
+                      <div style={{ marginTop: 16 }}>
+                        <h5 style={{ 
+                          fontSize: 13, 
+                          fontWeight: "bold", 
+                          color: "#004aad", 
+                          marginBottom: 8,
+                          paddingLeft: 5
+                        }}>
+                          📚 Lịch sử học tập
+                        </h5>
+                        <div style={{ overflowX: "auto" }}>
+                          <table style={{ 
+                            width: "100%", 
+                            borderCollapse: "collapse",
+                            fontSize: "11px"
+                          }}>
+                            <thead>
+                              <tr style={{ background: "#004aad" }}>
+                                <th style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center", color: "#fff" }}>Ngày</th>
+                                <th style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center", color: "#fff" }}>Lớp</th>
+                                <th style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center", color: "#fff" }}>Giờ học</th>
+                                <th style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center", color: "#fff" }}>Trạng thái</th>
+                                <th style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center", color: "#fff" }}>Ghi chú</th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {sortedSessions.length === 0 ? (
+                                <tr>
+                                  <td colSpan={5} style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center", color: "#999" }}>
+                                    Chưa có dữ liệu
+                                  </td>
+                                </tr>
+                              ) : (
+                                sortedSessions.map((session) => {
+                                  const studentRecord = session["Điểm danh"]?.find(
+                                    (r) => r["Student ID"] === student.id
+                                  );
+                                  if (!studentRecord) return null;
+
+                                  const attendance = studentRecord["Có mặt"]
+                                    ? studentRecord["Đi muộn"]
+                                      ? "Đi muộn"
+                                      : "Có mặt"
+                                    : studentRecord["Vắng có phép"]
+                                    ? "Vắng có phép"
+                                    : "Vắng";
+
+                                  const attendanceColor = studentRecord["Có mặt"]
+                                    ? studentRecord["Đi muộn"]
+                                      ? "#fa8c16"
+                                      : "#52c41a"
+                                    : studentRecord["Vắng có phép"]
+                                    ? "#1890ff"
+                                    : "#f5222d";
+
+                                  return (
+                                    <tr key={session.id}>
+                                      <td style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center" }}>
+                                        {dayjs(session["Ngày"]).format("DD/MM/YYYY")}
+                                      </td>
+                                      <td style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "left" }}>
+                                        {session["Tên lớp"] || "-"}
+                                      </td>
+                                      <td style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center" }}>
+                                        {session["Giờ bắt đầu"]} - {session["Giờ kết thúc"]}
+                                      </td>
+                                      <td style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "center", color: attendanceColor, fontWeight: 500 }}>
+                                        {attendance}
+                                      </td>
+                                      <td style={{ border: "1px solid #d9d9d9", padding: "6px", textAlign: "left", fontSize: 10 }}>
+                                        {studentRecord["Ghi chú"] || "-"}
+                                      </td>
+                                    </tr>
+                                  );
+                                })
+                              )}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
                     </div>
                   );
                 })}
@@ -1945,56 +2226,6 @@ const StudentReport = ({
             );
           })()}
         </Card>
-
-        {/* Session History or Monthly Summary */}
-        {viewMode === "session" ? (
-          <Card title="Lịch sử học tập (Chi tiết theo buổi)" size="small">
-            <Table
-              columns={columns}
-              dataSource={studentSessions}
-              rowKey="id"
-              pagination={{ pageSize: 10, showSizeChanger: false }}
-              size="small"
-              scroll={{ x: 1200 }}
-            />
-          </Card>
-        ) : (
-          <Card 
-            title={
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span>Báo cáo theo tháng - {selectedMonth?.format("MM/YYYY")}</span>
-                <DatePicker
-                  picker="month"
-                  format="MM/YYYY"
-                  placeholder="Chọn tháng"
-                  value={selectedMonth}
-                  onChange={(date) => setSelectedMonth(date)}
-                  style={{ width: 150 }}
-                />
-              </div>
-            }
-            size="small"
-          >
-            <Table
-              columns={columns}
-              dataSource={(() => {
-                // Filter sessions by selected month
-                if (!selectedMonth) return studentSessions;
-                
-                return studentSessions.filter((session) => {
-                  const sessionDate = dayjs(session["Ngày"]);
-                  return (
-                    sessionDate.month() === selectedMonth.month() &&
-                    sessionDate.year() === selectedMonth.year()
-                  );
-                });
-              })()}
-              rowKey="id"
-              pagination={{ pageSize: 10, showSizeChanger: false }}
-              size="small"
-            />
-          </Card>
-        )}
 
         {/* Footer */}
         <div
