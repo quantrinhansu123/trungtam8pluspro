@@ -59,6 +59,101 @@ const StudentReport = ({
   const [viewMode, setViewMode] = useState<"session" | "monthly">("session");
   const [selectedMonth, setSelectedMonth] = useState<dayjs.Dayjs | null>(dayjs());
   const [monthlyComments, setMonthlyComments] = useState<MonthlyComment[]>([]);
+  const [customScoresData, setCustomScoresData] = useState<{ [classId: string]: any }>({});
+  const [classes, setClasses] = useState<any[]>([]);
+
+  // Load classes from Firebase
+  useEffect(() => {
+    if (!open) return;
+    const classesRef = ref(database, "datasheet/Lớp_học");
+    const unsubscribe = onValue(classesRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        setClasses(Object.entries(data).map(([id, value]) => ({ id, ...(value as any) })));
+      }
+    });
+    return () => unsubscribe();
+  }, [open]);
+
+  // Load custom scores from Điểm_tự_nhập for all classes this student is in
+  useEffect(() => {
+    if (!open || !student?.id) return;
+
+    // Get all class IDs this student is enrolled in
+    const studentClassIds = new Set<string>();
+    sessions.forEach((session) => {
+      const record = session["Điểm danh"]?.find((r) => r["Student ID"] === student.id);
+      if (record && session["Class ID"]) {
+        studentClassIds.add(session["Class ID"]);
+      }
+    });
+
+    if (studentClassIds.size === 0) return;
+
+    const scoresRef = ref(database, "datasheet/Điểm_tự_nhập");
+    const unsubscribe = onValue(scoresRef, (snapshot) => {
+      const data = snapshot.val();
+      if (data) {
+        const relevantScores: { [classId: string]: any } = {};
+        studentClassIds.forEach((classId) => {
+          if (data[classId]) {
+            relevantScores[classId] = data[classId];
+          }
+        });
+        setCustomScoresData(relevantScores);
+      }
+    });
+    return () => unsubscribe();
+  }, [open, student?.id, sessions]);
+
+  // Helper function to get all scores for a student from Điểm_tự_nhập
+  const getCustomScoresForStudent = (studentId: string) => {
+    const scores: Array<{
+      classId: string;
+      className: string;
+      columnName: string;
+      testName: string;
+      date: string;
+      score: number;
+    }> = [];
+
+    Object.entries(customScoresData).forEach(([classId, classScores]: [string, any]) => {
+      if (!classScores?.columns || !classScores?.scores) return;
+
+      const classInfo = classes.find((c) => c.id === classId);
+      const className = classInfo?.["Tên lớp"] || classId;
+
+      const studentScore = classScores.scores.find((s: any) => s.studentId === studentId);
+      if (!studentScore) return;
+
+      classScores.columns.forEach((columnName: string) => {
+        const scoreValue = studentScore[columnName];
+        if (scoreValue !== null && scoreValue !== undefined && scoreValue !== "") {
+          // Extract date and test name from column: "testName (DD-MM-YYYY)"
+          const dateMatch = columnName.match(/\((\d{2}-\d{2}-\d{4})\)$/);
+          let dateStr = "";
+          let testName = columnName;
+
+          if (dateMatch) {
+            const [day, month, year] = dateMatch[1].split("-");
+            dateStr = `${year}-${month}-${day}`;
+            testName = columnName.replace(/\s*\(\d{2}-\d{2}-\d{4}\)$/, "").trim();
+          }
+
+          scores.push({
+            classId,
+            className,
+            columnName,
+            testName: testName || "Điểm",
+            date: dateStr,
+            score: Number(scoreValue),
+          });
+        }
+      });
+    });
+
+    return scores;
+  };
 
   // Load monthly comments from Firebase
   useEffect(() => {
@@ -202,10 +297,17 @@ const StudentReport = ({
       title: "Bài kiểm tra",
       key: "test_name",
       render: (_: any, record: AttendanceSession) => {
-        const studentRecord = record["Điểm danh"]?.find(
-          (r) => r["Student ID"] === student.id
-        );
-        return studentRecord?.["Bài kiểm tra"] || "-";
+        // Get scores from Điểm_tự_nhập for this date
+        const sessionDate = dayjs(record["Ngày"]).format("DD/MM/YYYY");
+        const allCustomScores = getCustomScoresForStudent(student.id);
+        const dateScores = allCustomScores.filter((s) => {
+          const scoreDate = dayjs(s.date).format("DD/MM/YYYY");
+          return scoreDate === sessionDate && s.className?.includes(record["Tên lớp"]?.split(" - ")[0] || "");
+        });
+        if (dateScores.length > 0) {
+          return dateScores.map(s => s.testName).join(", ");
+        }
+        return "-";
       },
       width: 150,
     },
@@ -213,10 +315,17 @@ const StudentReport = ({
       title: "Điểm KT",
       key: "test_score",
       render: (_: any, record: AttendanceSession) => {
-        const studentRecord = record["Điểm danh"]?.find(
-          (r) => r["Student ID"] === student.id
-        );
-        return studentRecord?.["Điểm kiểm tra"] ?? "-";
+        // Get scores from Điểm_tự_nhập for this date
+        const sessionDate = dayjs(record["Ngày"]).format("DD/MM/YYYY");
+        const allCustomScores = getCustomScoresForStudent(student.id);
+        const dateScores = allCustomScores.filter((s) => {
+          const scoreDate = dayjs(s.date).format("DD/MM/YYYY");
+          return scoreDate === sessionDate && s.className?.includes(record["Tên lớp"]?.split(" - ")[0] || "");
+        });
+        if (dateScores.length > 0) {
+          return dateScores.map(s => s.score).join(", ");
+        }
+        return "-";
       },
       width: 80,
     },
@@ -224,10 +333,17 @@ const StudentReport = ({
       title: "Điểm",
       key: "score",
       render: (_: any, record: AttendanceSession) => {
-        const studentRecord = record["Điểm danh"]?.find(
-          (r) => r["Student ID"] === student.id
-        );
-        return studentRecord?.["Điểm"] ?? "-";
+        // Get scores from Điểm_tự_nhập for this date  
+        const sessionDate = dayjs(record["Ngày"]).format("DD/MM/YYYY");
+        const allCustomScores = getCustomScoresForStudent(student.id);
+        const dateScores = allCustomScores.filter((s) => {
+          const scoreDate = dayjs(s.date).format("DD/MM/YYYY");
+          return scoreDate === sessionDate && s.className?.includes(record["Tên lớp"]?.split(" - ")[0] || "");
+        });
+        if (dateScores.length > 0) {
+          return dateScores.map(s => s.score).join(", ");
+        }
+        return "-";
       },
       width: 80,
     },
@@ -291,8 +407,6 @@ const StudentReport = ({
     // Calculate stats for selected month
     let presentCount = 0;
     let absentCount = 0;
-    let totalScore = 0;
-    let scoreCount = 0;
 
     filteredSessions.forEach((session) => {
       const record = session["Điểm danh"]?.find(
@@ -304,20 +418,31 @@ const StudentReport = ({
         } else {
           absentCount++;
         }
-        if (record["Điểm"] !== null && record["Điểm"] !== undefined) {
-          totalScore += record["Điểm"];
-          scoreCount++;
-        }
       }
     });
 
+    // Get scores from Điểm_tự_nhập (single source of truth) for selected month
+    const allCustomScores = getCustomScoresForStudent(student.id);
+    const monthScores = selectedMonth
+      ? allCustomScores.filter((s) => {
+          if (!s.date) return false;
+          const scoreDate = dayjs(s.date);
+          return (
+            scoreDate.month() === selectedMonth.month() &&
+            scoreDate.year() === selectedMonth.year()
+          );
+        })
+      : allCustomScores;
+    
+    const totalScore = monthScores.reduce((sum, s) => sum + s.score, 0);
+    const scoreCount = monthScores.length;
     const avgScore = scoreCount > 0 ? (totalScore / scoreCount).toFixed(1) : "0";
     const attendanceRate =
       filteredSessions.length > 0
         ? ((presentCount / filteredSessions.length) * 100).toFixed(1)
         : "0";
 
-    // Group sessions by subject for score table
+    // Group sessions by subject for attendance table
     const sessionsBySubject: { [subject: string]: AttendanceSession[] } = {};
     filteredSessions.forEach((session) => {
       const subject = session["Tên lớp"]?.split(" - ")[0] || "Chưa phân loại";
@@ -327,27 +452,50 @@ const StudentReport = ({
       sessionsBySubject[subject].push(session);
     });
 
-    // Generate score tables by subject
+    // Group scores by className from Điểm_tự_nhập
+    const scoresByClass: { [className: string]: typeof monthScores } = {};
+    monthScores.forEach((score) => {
+      const className = score.className?.split(" - ")[0] || score.className || "Chưa phân loại";
+      if (!scoresByClass[className]) {
+        scoresByClass[className] = [];
+      }
+      scoresByClass[className].push(score);
+    });
+
+    // Generate score tables by subject - combining attendance and scores
     let scoreTablesHTML = "";
-    Object.entries(sessionsBySubject).forEach(([subject, subjectSessions]) => {
+    
+    // Get all unique subjects from both sessions and scores
+    const allSubjects = new Set([
+      ...Object.keys(sessionsBySubject),
+      ...Object.keys(scoresByClass),
+    ]);
+
+    allSubjects.forEach((subject) => {
+      const subjectSessions = sessionsBySubject[subject] || [];
+      const subjectScoresFromDB = scoresByClass[subject] || [];
+      
       const sortedSessions = [...subjectSessions].sort(
         (a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime()
       );
 
-      // Calculate subject stats
-      let subjectScores: number[] = [];
-      sortedSessions.forEach((session) => {
-        const record = session["Điểm danh"]?.find(r => r["Student ID"] === student.id);
-        if (record?.["Điểm"] !== null && record?.["Điểm"] !== undefined) {
-          subjectScores.push(record["Điểm"]);
-        }
-      });
-      const subjectAvg = subjectScores.length > 0 
-        ? (subjectScores.reduce((a, b) => a + b, 0) / subjectScores.length).toFixed(1)
+      // Calculate subject stats from Điểm_tự_nhập
+      const subjectAvg = subjectScoresFromDB.length > 0 
+        ? (subjectScoresFromDB.reduce((sum, s) => sum + s.score, 0) / subjectScoresFromDB.length).toFixed(1)
         : "-";
 
       // Get comment for this subject from monthly comments
       const subjectComment = getClassComment(subject);
+
+      // Build a map of date -> scores for this subject
+      const scoresByDate: { [date: string]: Array<{ testName: string; score: number }> } = {};
+      subjectScoresFromDB.forEach((s) => {
+        const dateKey = dayjs(s.date).format("DD/MM");
+        if (!scoresByDate[dateKey]) {
+          scoresByDate[dateKey] = [];
+        }
+        scoresByDate[dateKey].push({ testName: s.testName, score: s.score });
+      });
 
       let tableRows = "";
       sortedSessions.forEach((session) => {
@@ -364,21 +512,28 @@ const StudentReport = ({
             ? (studentRecord["Đi muộn"] ? "#fa8c16" : "#52c41a")
             : (studentRecord["Vắng có phép"] ? "#1890ff" : "#f5222d");
           const homeworkPercent = studentRecord["% Hoàn thành BTVN"] ?? "-";
-          const testName = studentRecord["Bài kiểm tra"] || "-";
-          const score = studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-";
           const bonusScore = studentRecord["Điểm thưởng"] ?? "-";
           const completed = studentRecord["Bài tập hoàn thành"];
           const total = session["Bài tập"]?.["Tổng số bài"];
           const homework = (completed !== undefined && total) ? `${completed}/${total}` : "-";
           const note = studentRecord["Ghi chú"] || "-";
 
+          // Get all scores for this date from Điểm_tự_nhập
+          const dateScores = scoresByDate[date] || [];
+          const testNamesStr = dateScores.length > 0 
+            ? dateScores.map(s => s.testName).join(", ")
+            : "-";
+          const scoresStr = dateScores.length > 0 
+            ? dateScores.map(s => s.score).join(", ")
+            : "-";
+
           tableRows += `
             <tr>
               <td style="text-align: center;">${date}</td>
               <td style="text-align: center; color: ${attendanceColor}; font-weight: bold;">${attendance}</td>
               <td style="text-align: center;">${homeworkPercent}</td>
-              <td style="text-align: left; font-size: 11px;">${testName}</td>
-              <td style="text-align: center; font-weight: bold;">${score}</td>
+              <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
+              <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
               <td style="text-align: center;">${bonusScore}</td>
               <td style="text-align: center;">${homework}</td>
               <td style="text-align: left; font-size: 10px;">${note}</td>
@@ -679,24 +834,8 @@ const StudentReport = ({
   };
 
   const generateSessionPrintContent = () => {
-    const collectScores = (record: any) => {
-      const collected: number[] = [];
-      // Check all possible score fields: "Điểm kiểm tra", "Điểm", " Điểm"
-      const singleScore = record?.["Điểm kiểm tra"] ?? record?.["Điểm"] ?? record?.[" Điểm"];
-      if (singleScore !== undefined && singleScore !== null && !isNaN(Number(singleScore))) {
-        collected.push(Number(singleScore));
-      }
-      const detailedScores = record?.["Chi tiết điểm"];
-      if (Array.isArray(detailedScores)) {
-        detailedScores.forEach((detail: any) => {
-          const val = detail?.["Điểm"];
-          if (val !== undefined && val !== null && !isNaN(Number(val))) {
-            collected.push(Number(val));
-          }
-        });
-      }
-      return collected;
-    };
+    // Get all scores from Điểm_tự_nhập
+    const allCustomScores = getCustomScoresForStudent(student.id);
 
     // Get status text
     const getStatusText = (record: any) => {
@@ -716,17 +855,10 @@ const StudentReport = ({
       }
     };
 
-    // Calculate average score
-    const scores: number[] = [];
-    studentSessions.forEach((s) => {
-      const record = s["Điểm danh"]?.find((r) => r["Student ID"] === student.id);
-      if (record) {
-        scores.push(...collectScores(record));
-      }
-    });
+    // Calculate average score from Điểm_tự_nhập
     const averageScore =
-      scores.length > 0
-        ? (scores.reduce((a, b) => a + b, 0) / scores.length).toFixed(1)
+      allCustomScores.length > 0
+        ? (allCustomScores.reduce((a, b) => a + b.score, 0) / allCustomScores.length).toFixed(1)
         : "0";
 
     // Get unique classes
@@ -734,7 +866,7 @@ const StudentReport = ({
       new Set(studentSessions.map((s) => s["Tên lớp"] || ""))
     ).filter((name) => name);
 
-    // Generate score tables by subject (same as monthly report)
+    // Group sessions by subject
     const sessionsBySubject: { [subject: string]: AttendanceSession[] } = {};
     studentSessions.forEach((session) => {
       const subject = session["Tên lớp"]?.split(" - ")[0] || "Chưa phân loại";
@@ -744,23 +876,45 @@ const StudentReport = ({
       sessionsBySubject[subject].push(session);
     });
 
+    // Group scores by class
+    const scoresByClass: { [className: string]: typeof allCustomScores } = {};
+    allCustomScores.forEach((score) => {
+      const className = score.className?.split(" - ")[0] || score.className || "Chưa phân loại";
+      if (!scoresByClass[className]) {
+        scoresByClass[className] = [];
+      }
+      scoresByClass[className].push(score);
+    });
+
+    // Get all unique subjects
+    const allSubjects = new Set([
+      ...Object.keys(sessionsBySubject),
+      ...Object.keys(scoresByClass),
+    ]);
+
     let scoreTablesHTML = "";
-    Object.entries(sessionsBySubject).forEach(([subject, subjectSessions]) => {
+    allSubjects.forEach((subject) => {
+      const subjectSessions = sessionsBySubject[subject] || [];
+      const subjectScoresFromDB = scoresByClass[subject] || [];
+      
       const sortedSessions = [...subjectSessions].sort(
         (a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime()
       );
 
-      // Calculate subject average
-      let subjectScores: number[] = [];
-      sortedSessions.forEach((session) => {
-        const record = session["Điểm danh"]?.find(r => r["Student ID"] === student.id);
-        if (record) {
-          subjectScores = subjectScores.concat(collectScores(record));
-        }
-      });
-      const subjectAvg = subjectScores.length > 0 
-        ? (subjectScores.reduce((a, b) => a + b, 0) / subjectScores.length).toFixed(1)
+      // Calculate subject average from Điểm_tự_nhập
+      const subjectAvg = subjectScoresFromDB.length > 0 
+        ? (subjectScoresFromDB.reduce((sum, s) => sum + s.score, 0) / subjectScoresFromDB.length).toFixed(1)
         : "-";
+
+      // Build a map of date -> scores
+      const scoresByDate: { [date: string]: Array<{ testName: string; score: number }> } = {};
+      subjectScoresFromDB.forEach((s) => {
+        const dateKey = dayjs(s.date).format("DD/MM");
+        if (!scoresByDate[dateKey]) {
+          scoresByDate[dateKey] = [];
+        }
+        scoresByDate[dateKey].push({ testName: s.testName, score: s.score });
+      });
 
       let tableRows = "";
       sortedSessions.forEach((session) => {
@@ -777,21 +931,28 @@ const StudentReport = ({
             ? (studentRecord["Đi muộn"] ? "#fa8c16" : "#52c41a")
             : (studentRecord["Vắng có phép"] ? "#1890ff" : "#f5222d");
           const homeworkPercent = studentRecord["% Hoàn thành BTVN"] ?? "-";
-          const testName = studentRecord["Bài kiểm tra"] || "-";
-          const score = studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-";
           const bonusScore = studentRecord["Điểm thưởng"] ?? "-";
           const completed = studentRecord["Bài tập hoàn thành"];
           const total = session["Bài tập"]?.["Tổng số bài"];
           const homework = (completed !== undefined && total) ? `${completed}/${total}` : "-";
           const note = studentRecord["Ghi chú"] || "-";
 
+          // Get scores from Điểm_tự_nhập for this date
+          const dateScores = scoresByDate[date] || [];
+          const testNamesStr = dateScores.length > 0 
+            ? dateScores.map(s => s.testName).join(", ")
+            : "-";
+          const scoresStr = dateScores.length > 0 
+            ? dateScores.map(s => s.score).join(", ")
+            : "-";
+
           tableRows += `
             <tr>
               <td style="text-align: center;">${date}</td>
               <td style="text-align: center; color: ${attendanceColor}; font-weight: bold;">${attendance}</td>
               <td style="text-align: center;">${homeworkPercent}</td>
-              <td style="text-align: left; font-size: 11px;">${testName}</td>
-              <td style="text-align: center; font-weight: bold;">${score}</td>
+              <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
+              <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
               <td style="text-align: center;">${bonusScore}</td>
               <td style="text-align: center;">${homework}</td>
               <td style="text-align: left; font-size: 10px;">${note}</td>
@@ -827,30 +988,42 @@ const StudentReport = ({
       `;
     });
 
-    // Generate history table
+    // Generate history table - also use Điểm_tự_nhập
     let historyTableRows = "";
     studentSessions.forEach((session) => {
       const studentRecord = session["Điểm danh"]?.find(
         (r) => r["Student ID"] === student.id
       );
       if (studentRecord) {
-        const date = dayjs(session["Ngày"]).format("DD/MM/YYYY");
+        const dateFormatted = dayjs(session["Ngày"]).format("DD/MM/YYYY");
+        const dateShort = dayjs(session["Ngày"]).format("DD/MM");
         const className = session["Tên lớp"] || "-";
+        const subjectName = className.split(" - ")[0] || className;
         const timeRange = `${session["Giờ bắt đầu"]} - ${session["Giờ kết thúc"]}`;
         const statusText = getStatusText(studentRecord);
         const statusColor = getStatusColor(studentRecord);
-        const score = studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-";
-        const testName = studentRecord["Bài kiểm tra"] || "-";
         const note = studentRecord["Ghi chú"] || "-";
+
+        // Get scores from Điểm_tự_nhập for this date and class
+        const dateScores = allCustomScores.filter((s) => {
+          const scoreDate = dayjs(s.date).format("DD/MM");
+          return scoreDate === dateShort && s.className?.includes(subjectName);
+        });
+        const testNamesStr = dateScores.length > 0 
+          ? dateScores.map(s => s.testName).join(", ")
+          : "-";
+        const scoresStr = dateScores.length > 0 
+          ? dateScores.map(s => s.score).join(", ")
+          : "-";
 
         historyTableRows += `
           <tr>
-            <td style="text-align: center;">${date}</td>
+            <td style="text-align: center;">${dateFormatted}</td>
             <td style="text-align: left;">${className}</td>
             <td style="text-align: center;">${timeRange}</td>
             <td style="text-align: center; color: ${statusColor}; font-weight: 500;">${statusText}</td>
-            <td style="text-align: center; font-weight: bold;">${score}</td>
-            <td style="text-align: left; font-size: 11px;">${testName}</td>
+            <td style="text-align: center; font-weight: bold;">${scoresStr}</td>
+            <td style="text-align: left; font-size: 11px;">${testNamesStr}</td>
             <td style="text-align: left; font-size: 10px;">${note}</td>
           </tr>
         `;
@@ -1585,8 +1758,7 @@ const StudentReport = ({
           style={{ marginBottom: 16 }}
         >
           {(() => {
-            // Group sessions by subject
-            const sessionsBySubject: { [subject: string]: AttendanceSession[] } = {};
+            // Filter sessions by selected month
             const sessionsToShow = viewMode === "monthly" && selectedMonth
               ? studentSessions.filter((session) => {
                   const sessionDate = dayjs(session["Ngày"]);
@@ -1597,6 +1769,8 @@ const StudentReport = ({
                 })
               : studentSessions;
 
+            // Group sessions by subject for attendance
+            const sessionsBySubject: { [subject: string]: AttendanceSession[] } = {};
             sessionsToShow.forEach((session) => {
               const subject = session["Tên lớp"]?.split(" - ")[0] || "Chưa phân loại";
               if (!sessionsBySubject[subject]) {
@@ -1605,19 +1779,66 @@ const StudentReport = ({
               sessionsBySubject[subject].push(session);
             });
 
-            if (Object.keys(sessionsBySubject).length === 0) {
+            // Get scores from Điểm_tự_nhập for selected month
+            const allCustomScores = getCustomScoresForStudent(student.id);
+            const monthScoresFiltered = viewMode === "monthly" && selectedMonth
+              ? allCustomScores.filter((s) => {
+                  if (!s.date) return false;
+                  const scoreDate = dayjs(s.date);
+                  return (
+                    scoreDate.month() === selectedMonth.month() &&
+                    scoreDate.year() === selectedMonth.year()
+                  );
+                })
+              : allCustomScores;
+
+            // Group scores by className
+            const scoresByClass: { [className: string]: typeof monthScoresFiltered } = {};
+            monthScoresFiltered.forEach((score) => {
+              const className = score.className?.split(" - ")[0] || score.className || "Chưa phân loại";
+              if (!scoresByClass[className]) {
+                scoresByClass[className] = [];
+              }
+              scoresByClass[className].push(score);
+            });
+
+            // Get all unique subjects
+            const allSubjects = new Set([
+              ...Object.keys(sessionsBySubject),
+              ...Object.keys(scoresByClass),
+            ]);
+
+            if (allSubjects.size === 0) {
               return <div style={{ textAlign: "center", padding: "20px", color: "#999" }}>Chưa có dữ liệu</div>;
             }
 
             return (
               <div style={{ maxHeight: "400px", overflowY: "auto" }}>
-                {Object.entries(sessionsBySubject).map(([subject, subjectSessions]) => {
+                {Array.from(allSubjects).map((subject) => {
+                  const subjectSessions = sessionsBySubject[subject] || [];
+                  const subjectScoresFromDB = scoresByClass[subject] || [];
+                  
                   const sortedSessions = [...subjectSessions].sort(
                     (a, b) => new Date(a["Ngày"]).getTime() - new Date(b["Ngày"]).getTime()
                   );
                   
+                  // Calculate subject average from Điểm_tự_nhập
+                  const subjectAvg = subjectScoresFromDB.length > 0
+                    ? (subjectScoresFromDB.reduce((sum, s) => sum + s.score, 0) / subjectScoresFromDB.length).toFixed(1)
+                    : "-";
+                  
                   // Get comment for this subject
                   const subjectComment = getClassComment(subject);
+
+                  // Build a map of date -> scores for this subject
+                  const scoresByDate: { [date: string]: Array<{ testName: string; score: number }> } = {};
+                  subjectScoresFromDB.forEach((s) => {
+                    const dateKey = dayjs(s.date).format("DD/MM/YYYY");
+                    if (!scoresByDate[dateKey]) {
+                      scoresByDate[dateKey] = [];
+                    }
+                    scoresByDate[dateKey].push({ testName: s.testName, score: s.score });
+                  });
 
                   return (
                     <div key={subject} style={{ marginBottom: 24 }}>
@@ -1626,9 +1847,12 @@ const StudentReport = ({
                         padding: "8px 12px", 
                         fontWeight: "bold",
                         marginBottom: "8px",
-                        borderLeft: "4px solid #1890ff"
+                        borderLeft: "4px solid #1890ff",
+                        display: "flex",
+                        justifyContent: "space-between"
                       }}>
-                        Môn {subject}
+                        <span>Môn {subject}</span>
+                        <span style={{ fontSize: 12, color: "#1890ff" }}>Điểm TB: {subjectAvg}</span>
                       </h4>
                       <div style={{ overflowX: "auto" }}>
                         <table style={{ 
@@ -1661,10 +1885,20 @@ const StudentReport = ({
                                 ? "Vắng có phép"
                                 : "Vắng";
 
+                              const dateFormatted = dayjs(session["Ngày"]).format("DD/MM/YYYY");
+                              // Get all scores for this date from Điểm_tự_nhập
+                              const dateScores = scoresByDate[dateFormatted] || [];
+                              const testNamesStr = dateScores.length > 0 
+                                ? dateScores.map(s => s.testName).join(", ")
+                                : "-";
+                              const scoresStr = dateScores.length > 0 
+                                ? dateScores.map(s => s.score).join(", ")
+                                : "-";
+
                               return (
                                 <tr key={session.id}>
                                   <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                    {dayjs(session["Ngày"]).format("DD/MM/YYYY")}
+                                    {dateFormatted}
                                   </td>
                                   <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
                                     {attendance}
@@ -1673,10 +1907,10 @@ const StudentReport = ({
                                     {studentRecord["% Hoàn thành BTVN"] ?? "-"}
                                   </td>
                                   <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
-                                    {studentRecord["Bài kiểm tra"] || "-"}
+                                    {testNamesStr}
                                   </td>
                                   <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center", fontWeight: "bold" }}>
-                                    {studentRecord["Điểm kiểm tra"] ?? studentRecord["Điểm"] ?? "-"}
+                                    {scoresStr}
                                   </td>
                                   <td style={{ border: "1px solid #d9d9d9", padding: "8px", textAlign: "center" }}>
                                     {studentRecord["Điểm thưởng"] ?? "-"}
