@@ -2284,7 +2284,7 @@ const InvoicePage = () => {
       
                   <div class="content">
                       <div class="info-grid">
-                          <div class="info-box" ${!includeQR ? 'style="flex: 1;"' : ''}>
+                          <div class="info-box">
                               <div class="box-title"><i class="fas fa-user-graduate"></i> Học sinh</div>
                               <div class="info-row"><span class="info-label">Họ tên:</span><span class="info-val" contenteditable="true">${invoice.studentName
       }</span></div>
@@ -2297,7 +2297,12 @@ const InvoicePage = () => {
                               <div class="info-row"><span class="info-label">Người nhận:</span><span class="info-val">${accountName}</span></div>
                               <div class="info-row"><span class="info-label">NH:</span><span class="info-val" contenteditable="true">${bankId}</span></div>
                               <div class="info-row"><span class="info-label">STK:</span><span class="info-val" contenteditable="true">${accountNo}</span></div>
-                          </div>` : ''}
+                          </div>` : `<div class="info-box" style="background: #fff3cd; border: 2px solid #ffc107;">
+                              <div class="box-title" style="background: #ffc107; color: #856404;"><i class="fas fa-bell"></i> Ghi chú</div>
+                              <div style="padding: 10px; color: #856404; font-size: 13px; line-height: 1.6;">
+                                  Phụ huynh vui lòng để học phí trong phong bì dán kín. Học sinh nộp tận tay cho bộ phận trực hoặc Thầy/Cô giáo tại lớp.
+                              </div>
+                          </div>`}
                       </div>
       
                       <div class="table-container">
