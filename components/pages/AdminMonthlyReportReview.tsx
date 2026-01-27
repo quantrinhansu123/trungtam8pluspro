@@ -478,6 +478,13 @@ const AdminMonthlyReportReview = () => {
         if (record) {
           const sessionDate = dayjs(session["Ngày"]).format("YYYY-MM-DD"); // Full date for matching
           const displayDate = dayjs(session["Ngày"]).format("DD/MM"); // Display format
+          
+          // Get scores from Điểm_tự_nhập for this date (supports multiple scores per day)
+          const dateScores = scoresByDate[sessionDate] || [];
+          
+          // CHỈ HIỂN THỊ NHỮNG NGÀY CÓ ĐIỂM - ẩn các ngày không có điểm
+          if (dateScores.length === 0) return;
+          
           const attendance = record["Có mặt"]
             ? record["Đi muộn"] ? "Muộn" : "✓"
             : record["Vắng có phép"] ? "P" : "✗";
@@ -488,14 +495,8 @@ const AdminMonthlyReportReview = () => {
           const bonusScore = record["Điểm thưởng"] ?? "-";
           const note = record["Ghi chú"] || "-";
 
-          // Get scores from Điểm_tự_nhập for this date (supports multiple scores per day)
-          const dateScores = scoresByDate[sessionDate] || [];
-          const testNamesStr = dateScores.length > 0 
-            ? dateScores.map(s => s.testName).join(", ")
-            : "-";
-          const scoresStr = dateScores.length > 0 
-            ? dateScores.map(s => s.score).join(", ")
-            : "-";
+          const testNamesStr = dateScores.map(s => s.testName).join(", ");
+          const scoresStr = dateScores.map(s => s.score).join(", ");
 
           tableRows += `
             <tr>

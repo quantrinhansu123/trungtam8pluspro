@@ -1722,7 +1722,36 @@ const StudentReport = ({
         </Button>,
       ]}
     >
-      <div ref={printRef}>
+      <div ref={printRef} style={{ position: "relative", minHeight: 600 }}>
+        {/* Watermark Logo */}
+        <div
+          style={{
+            position: "absolute",
+            top: 300,
+            left: "50%",
+            transform: "translateX(-50%)",
+            zIndex: 0,
+            pointerEvents: "none",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+          }}
+        >
+          <img
+            src="/img/logo.png"
+            alt="Watermark"
+            style={{
+              width: 450,
+              height: 450,
+              objectFit: "contain",
+              opacity: 0.15,
+              filter: "grayscale(20%)",
+            }}
+          />
+        </div>
+        
+        {/* Report Content */}
+        <div style={{ position: "relative", zIndex: 1 }}>
         {/* Header */}
         <div
           className="header"
@@ -2129,6 +2158,7 @@ const StudentReport = ({
           <p>Báo cáo này được tạo tự động từ hệ thống quản lý học sinh</p>
           <p>Mọi thắc mắc xin liên hệ với giáo viên hoặc ban quản lý</p>
         </div>
+        </div>{/* End Report Content */}
       </div>
     </Modal>
   );

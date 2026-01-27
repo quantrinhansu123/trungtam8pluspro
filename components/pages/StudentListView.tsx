@@ -1848,85 +1848,125 @@ const StudentListView: React.FC = () => {
 `;
     });
 
-    const htmlContent = `
-  < !DOCTYPE html >
-    <html>
-      <head>
-        <meta charset="UTF-8">
-          <title>Bảng điểm - ${student["Họ và tên"]}</title>
-          <style>
-            @page {
-              size: A4 landscape;
-            margin: 15mm;
-            }
-            body {
-              font - family: Arial, sans-serif;
-            padding: 20px;
-            }
-            h1 {
-              text - align: center;
-            color: #1890ff;
-            margin-bottom: 10px;
-            }
-            h2 {
-              text - align: center;
-            color: #333;
-            margin-bottom: 20px;
-            }
-            .info {
-              text - align: center;
-            margin-bottom: 20px;
-            color: #666;
-            }
-            table {
-              width: 100%;
-            border-collapse: collapse;
-            margin-bottom: 30px;
-            }
-            th, td {
-              border: 1px solid #000;
-            padding: 8px;
-            text-align: center;
-            font-size: 11px;
-            }
-            th {
-              background: #f0f0f0;
-            font-weight: bold;
-            }
-            .subject-header {
-              background: #e6f7ff;
-            font-weight: bold;
-            font-size: 14px;
-            text-align: left;
-            padding: 10px;
-            margin-top: 20px;
-            border-left: 4px solid #1890ff;
-            }
-            @media print {
-              button {
-              display: none;
-              }
-            }
-          </style>
-      </head>
-      <body>
-        <h1>BẢNG ĐIỂM CHI TIẾT</h1>
-        <h2>Trung tâm Trí Tuệ 8+</h2>
-        <div class="info">
-          <p><strong>Học sinh:</strong> ${student["Họ và tên"]}</p>
-          <p>Ngày xuất: ${new Date().toLocaleDateString("vi-VN")} ${new Date().toLocaleTimeString("vi-VN")}</p>
-        </div>
-
-        ${tablesHTML}
-
-        <script>
-          window.onload = function() {
-            window.print();
-            };
-        </script>
-      </body>
-    </html>
-`;
+    const htmlContent = `<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>Bảng điểm - ${student["Họ và tên"]}</title>
+  <style>
+    @page {
+      size: A4 landscape;
+      margin: 15mm;
+    }
+    body {
+      font-family: Arial, sans-serif;
+      padding: 20px;
+      margin: 0;
+    }
+    h1 {
+      text-align: center;
+      color: #1890ff;
+      margin-bottom: 10px;
+    }
+    h2 {
+      text-align: center;
+      color: #333;
+      margin-bottom: 20px;
+    }
+    .info {
+      text-align: center;
+      margin-bottom: 20px;
+      color: #666;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin-bottom: 30px;
+    }
+    th, td {
+      border: 1px solid #000;
+      padding: 8px;
+      text-align: center;
+      font-size: 11px;
+    }
+    th {
+      background: #f0f0f0;
+      font-weight: bold;
+    }
+    .subject-header {
+      background: #e6f7ff;
+      font-weight: bold;
+      font-size: 14px;
+      text-align: left;
+      padding: 10px;
+      margin-top: 20px;
+      border-left: 4px solid #1890ff;
+    }
+    /* Watermark styles */
+    .watermark-container {
+      position: relative;
+      min-height: 100vh;
+    }
+    .watermark-logo {
+      position: fixed;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      z-index: 0;
+      pointer-events: none;
+    }
+    .watermark-logo img {
+      width: 500px;
+      height: 500px;
+      object-fit: contain;
+      opacity: 0.15;
+      filter: grayscale(30%);
+    }
+    .report-content {
+      position: relative;
+      z-index: 1;
+    }
+    @media print {
+      button { display: none; }
+      .watermark-logo {
+        position: fixed;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        z-index: 0;
+        pointer-events: none;
+      }
+      .watermark-logo img {
+        width: 550px;
+        height: 550px;
+        opacity: 0.18;
+        filter: grayscale(30%);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="watermark-container">
+    <div class="watermark-logo">
+      <img src="/img/logo.png" alt="Watermark Logo" />
+    </div>
+    <div class="report-content">
+      <h1>BẢNG ĐIỂM CHI TIẾT</h1>
+      <h2>Trung tâm Trí Tuệ 8+</h2>
+      <div class="info">
+        <p><strong>Học sinh:</strong> ${student["Họ và tên"]}</p>
+        <p>Ngày xuất: ${new Date().toLocaleDateString("vi-VN")} ${new Date().toLocaleTimeString("vi-VN")}</p>
+      </div>
+      ${tablesHTML}
+    </div>
+  </div>
+  <script>
+    window.onload = function() {
+      window.print();
+    };
+  </script>
+</body>
+</html>`;
 
     printWindow.document.write(htmlContent);
     printWindow.document.close();
