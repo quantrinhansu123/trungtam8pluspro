@@ -336,7 +336,7 @@ const AttendanceSessionPage = () => {
               // Nếu không có enrollment date (backward compatibility), hiển thị học sinh
               if (!enrollments[studentId]) return true;
               
-              // Chỉ hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session
+              // Hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session (đăng ký ngày 27 thì điểm danh được ngày 27)
               const enrollmentDate = enrollments[studentId].enrollmentDate;
               return enrollmentDate <= sessionDate;
             });
@@ -366,7 +366,7 @@ const AttendanceSessionPage = () => {
           ...(value as Omit<Student, "id">),
         }));
 
-        // Filter students by enrollment date - only show students enrolled on or before session date
+        // Filter students by enrollment date - hiển thị học sinh đã đăng ký trước hoặc trong ngày session
         const enrollments = classData["Student Enrollments"] || {};
         const classStudents = allStudents
           .filter((s) => {
@@ -375,7 +375,7 @@ const AttendanceSessionPage = () => {
             // If no enrollment date recorded, show the student (backward compatibility)
             if (!enrollments[s.id]) return true;
             
-            // Check if student enrolled on or before session date
+            // Hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session (đăng ký ngày 27 thì điểm danh được ngày 27)
             const enrollmentDate = enrollments[s.id].enrollmentDate;
             return enrollmentDate <= sessionDate;
           })
@@ -587,10 +587,15 @@ const AttendanceSessionPage = () => {
   };
 
   const handleSelectAll = (present: boolean) => {
+    const currentTime = dayjs().format("HH:mm:ss");
     setAttendanceRecords((prev) =>
       prev.map((record) => ({
         ...record,
         "Có mặt": present,
+        // Tự động ghi giờ check-in khi chọn tất cả "Có mặt"
+        "Giờ check-in": present && !record["Giờ check-in"] 
+          ? currentTime 
+          : record["Giờ check-in"]
       }))
     );
   };

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { ref, onValue, push, set, update, remove } from 'firebase/database';
+import { ref, onValue, push, set, update, remove, get } from 'firebase/database';
 import { database } from '../firebase';
 import { Class } from '../types';
 import { toast } from 'react-toastify';
@@ -73,7 +73,10 @@ export const useClasses = () => {
 
     const addStudentToClass = async (classId: string, studentId: string, studentName: string, enrollmentDate?: string) => {
         try {
-            const classData = classes.find(c => c.id === classId);
+            // Fetch fresh class data to avoid stale state
+            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
+            const snapshot = await get(classRef);
+            const classData = snapshot.val();
             if (!classData) throw new Error('Class not found');
 
             const updatedStudentIds = [...(classData['Student IDs'] || []), studentId];
@@ -102,7 +105,10 @@ export const useClasses = () => {
         enrollmentDate?: string
     ) => {
         try {
-            const classData = classes.find(c => c.id === classId);
+            // Fetch fresh class data to avoid stale state
+            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
+            const snapshot = await get(classRef);
+            const classData = snapshot.val();
             if (!classData) throw new Error('Class not found');
 
             // Get current students
@@ -145,16 +151,24 @@ export const useClasses = () => {
 
     const removeStudentFromClass = async (classId: string, studentId: string) => {
         try {
-            const classData = classes.find(c => c.id === classId);
+            // Fetch fresh class data to avoid stale state
+            const classRef = ref(database, `datasheet/Lớp_học/${classId}`);
+            const snapshot = await get(classRef);
+            const classData = snapshot.val();
             if (!classData) throw new Error('Class not found');
 
-            const updatedStudentIds = (classData['Student IDs'] || []).filter(id => id !== studentId);
+            const updatedStudentIds = (classData['Student IDs'] || []).filter((id: string) => id !== studentId);
             const studentIndex = (classData['Student IDs'] || []).indexOf(studentId);
-            const updatedStudentNames = (classData['Học sinh'] || []).filter((_, index) => index !== studentIndex);
+            const updatedStudentNames = (classData['Học sinh'] || []).filter((_: string, index: number) => index !== studentIndex);
+            
+            // Also remove enrollment record for this student
+            const currentEnrollments = classData['Student Enrollments'] || {};
+            const { [studentId]: removed, ...remainingEnrollments } = currentEnrollments;
 
             await updateClass(classId, {
                 'Student IDs': updatedStudentIds,
-                'Học sinh': updatedStudentNames
+                'Học sinh': updatedStudentNames,
+                'Student Enrollments': remainingEnrollments
             });
         } catch (error) {
             console.error('Error removing student from class:', error);

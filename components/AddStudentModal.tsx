@@ -169,7 +169,7 @@ const AddStudentModal = ({ open, onClose, classData }: AddStudentModalProps) => 
                         />
                     </div>
                     <Text type="secondary" style={{ fontSize: 12 }}>
-                        💡 Học sinh chỉ xuất hiện trong điểm danh từ ngày đăng ký trở đi
+                        💡 Học sinh xuất hiện trong điểm danh từ ngày đăng ký trở đi
                     </Text>
                     
                     <Button

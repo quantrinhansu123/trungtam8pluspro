@@ -141,7 +141,7 @@ const StudentReportPage = () => {
 
   const stats = getStudentStats(student.id);
 
-  // Filter sessions for this student - chỉ hiển thị sessions sau ngày đăng ký
+  // Filter sessions for this student - hiển thị sessions từ ngày đăng ký trở đi (bao gồm ngày đăng ký)
   const studentSessions = sessions
     .filter((session) => {
       // Check if student has attendance record
@@ -158,7 +158,7 @@ const StudentReportPage = () => {
         if (enrollments[student.id]) {
           const enrollmentDate = enrollments[student.id].enrollmentDate;
           const sessionDate = session["Ngày"];
-          // Chỉ hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session
+          // Hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session
           if (enrollmentDate > sessionDate) return false;
         }
       }

@@ -348,9 +348,19 @@ const StudentListView: React.FC = () => {
   useEffect(() => {
     if (editingStudent && isEditModalOpen) {
       // Determine registered class IDs from `classes` table where this student is enrolled
-      const enrolledClassIds = classes
-        .filter((c) => (c["Student IDs"] || []).includes(editingStudent.id))
-        .map((c) => c.id);
+      const enrolledClasses = classes.filter((c) => (c["Student IDs"] || []).includes(editingStudent.id));
+      const enrolledClassIds = enrolledClasses.map((c) => c.id);
+      
+      // Get the most recent enrollment date from enrolled classes (if any)
+      let existingEnrollmentDate = null;
+      for (const cls of enrolledClasses) {
+        const enrollments = cls["Student Enrollments"] || {};
+        if (enrollments[editingStudent.id]?.enrollmentDate) {
+          // Use the first found enrollment date (or could use the most recent)
+          existingEnrollmentDate = enrollments[editingStudent.id].enrollmentDate;
+          break;
+        }
+      }
 
       editStudentForm.setFieldsValue({
         name: editingStudent["Họ và tên"] || "",
@@ -364,6 +374,8 @@ const StudentListView: React.FC = () => {
         grade: editingStudent["Khối"] || "",
         // registeredSubjects now holds class IDs
         registeredSubjects: enrolledClassIds,
+        // Set enrollment date from existing data (if any)
+        enrollmentDate: existingEnrollmentDate ? dayjs(existingEnrollmentDate) : null,
       });
     } else if (!editingStudent && isEditModalOpen) {
       // Reset form when adding new student
@@ -804,12 +816,15 @@ const StudentListView: React.FC = () => {
               // Use provided enrollment date or default to today
               const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0]; // YYYY-MM-DD
               for (const classId of selectedClassIds) {
-                const cls = classes.find((c) => c.id === classId);
-                if (!cls) continue;
-                const currentIds = Array.isArray(cls["Student IDs"]) ? cls["Student IDs"] : [];
+                // Fetch fresh class data from Firebase to avoid stale state issues
+                const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
+                const freshClassData = await freshClassResp.json();
+                if (!freshClassData) continue;
+                
+                const currentIds = Array.isArray(freshClassData["Student IDs"]) ? freshClassData["Student IDs"] : [];
                 if (!currentIds.includes(newStudent.id)) {
                   const updatedIds = [...currentIds, newStudent.id];
-                  const currentEnrollments = cls["Student Enrollments"] || {};
+                  const currentEnrollments = freshClassData["Student Enrollments"] || {};
                   const updatedEnrollments = {
                     ...currentEnrollments,
                     [newStudent.id]: { enrollmentDate: dateToUse }
@@ -992,16 +1007,22 @@ const StudentListView: React.FC = () => {
           const previousClassIds = classes.filter((c) => (c["Student IDs"] || []).includes(studentId)).map((c) => c.id);
           const toAdd = selectedClassIds.filter((id) => !previousClassIds.includes(id));
           const toRemove = previousClassIds.filter((id) => !selectedClassIds.includes(id));
+          // Classes that remain (already enrolled and still selected) - need to update enrollment date if provided
+          const toUpdateEnrollment = selectedClassIds.filter((id) => previousClassIds.includes(id));
 
+          // Add student to new classes
           for (const classId of toAdd) {
-            const cls = classes.find((c) => c.id === classId);
-            if (!cls) continue;
-            const currentIds = Array.isArray(cls["Student IDs"]) ? cls["Student IDs"] : [];
+            // Fetch fresh class data from Firebase to avoid stale state issues
+            const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
+            const freshClassData = await freshClassResp.json();
+            if (!freshClassData) continue;
+            
+            const currentIds = Array.isArray(freshClassData["Student IDs"]) ? freshClassData["Student IDs"] : [];
             if (!currentIds.includes(studentId)) {
               const updatedIds = [...currentIds, studentId];
               // Use provided enrollment date or default to today
               const dateToUse = enrollmentDate || new Date().toISOString().split('T')[0];
-              const currentEnrollments = cls["Student Enrollments"] || {};
+              const currentEnrollments = freshClassData["Student Enrollments"] || {};
               const updatedEnrollments = {
                 ...currentEnrollments,
                 [studentId]: { enrollmentDate: dateToUse }
@@ -1017,17 +1038,55 @@ const StudentListView: React.FC = () => {
               });
             }
           }
+          
+          // Update enrollment date for existing classes (only if enrollmentDate is explicitly provided by user)
+          if (enrollmentDate) {
+            for (const classId of toUpdateEnrollment) {
+              // Fetch fresh class data from Firebase
+              const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
+              const freshClassData = await freshClassResp.json();
+              if (!freshClassData) continue;
+              
+              const currentEnrollments = freshClassData["Student Enrollments"] || {};
+              // Only update if the enrollment date is different
+              if (currentEnrollments[studentId]?.enrollmentDate !== enrollmentDate) {
+                const updatedEnrollments = {
+                  ...currentEnrollments,
+                  [studentId]: { enrollmentDate: enrollmentDate }
+                };
+                const url2 = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
+                await fetch(url2, {
+                  method: "PATCH",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({ 
+                    "Student Enrollments": updatedEnrollments
+                  }),
+                });
+              }
+            }
+          }
+          // Remove student from deselected classes
           for (const classId of toRemove) {
-            const cls = classes.find((c) => c.id === classId);
-            if (!cls) continue;
-            const currentIds = Array.isArray(cls["Student IDs"]) ? cls["Student IDs"] : [];
+            // Fetch fresh class data from Firebase
+            const freshClassResp = await fetch(`${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`);
+            const freshClassData = await freshClassResp.json();
+            if (!freshClassData) continue;
+            
+            const currentIds = Array.isArray(freshClassData["Student IDs"]) ? freshClassData["Student IDs"] : [];
             if (currentIds.includes(studentId)) {
               const updatedIds = currentIds.filter((sid: string) => sid !== studentId);
+              // Also remove enrollment record for this student
+              const currentEnrollments = freshClassData["Student Enrollments"] || {};
+              const { [studentId]: removed, ...remainingEnrollments } = currentEnrollments;
+              
               const url3 = `${DATABASE_URL_BASE}/datasheet/Lớp_học/${classId}.json`;
               await fetch(url3, {
                 method: "PATCH",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ "Student IDs": updatedIds }),
+                body: JSON.stringify({ 
+                  "Student IDs": updatedIds,
+                  "Student Enrollments": remainingEnrollments
+                }),
               });
             }
           }
@@ -3102,7 +3161,7 @@ const StudentListView: React.FC = () => {
                             const sessionDate = new Date(session["Ngày"]);
                             if (sessionDate < fromDate || sessionDate > toDate) return false;
 
-                            // Check enrollment date - chỉ hiển thị sessions sau ngày đăng ký
+                            // Check enrollment date - hiển thị sessions từ ngày đăng ký trở đi (bao gồm ngày đăng ký)
                             const classId = session["Class ID"];
                             const classData = classes.find(c => c.id === classId);
                             if (classData) {
@@ -3110,7 +3169,7 @@ const StudentListView: React.FC = () => {
                               if (enrollments[selectedStudent.id]) {
                                 const enrollmentDate = enrollments[selectedStudent.id].enrollmentDate;
                                 const sessionDateStr = session["Ngày"];
-                                // Chỉ hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session
+                                // Hiển thị nếu học sinh đã đăng ký trước hoặc trong ngày session
                                 if (enrollmentDate > sessionDateStr) return false;
                               }
                             }
@@ -3378,7 +3437,7 @@ const StudentListView: React.FC = () => {
                 <Form.Item
                   label="Ngày đăng ký lớp"
                   name="enrollmentDate"
-                  extra="Ngày học sinh bắt đầu tham gia các lớp mới được chọn"
+                  extra="Ngày đăng ký sẽ áp dụng cho TẤT CẢ các lớp đang chọn"
                 >
                   <DatePicker
                     format="DD/MM/YYYY"
