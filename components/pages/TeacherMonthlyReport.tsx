@@ -328,7 +328,7 @@ const TeacherMonthlyReport = () => {
           const record = session["Điểm danh"]?.find((r) => r["Student ID"] === studentId);
           if (record) {
             const scoreValue = record["Điểm kiểm tra"] ?? record["Điểm"];
-            if (scoreValue !== undefined && scoreValue !== null && scoreValue !== "" && !isNaN(Number(scoreValue))) {
+            if (scoreValue !== undefined && scoreValue !== null && !isNaN(Number(scoreValue))) {
               attendanceScores.push(Number(scoreValue));
             }
           }

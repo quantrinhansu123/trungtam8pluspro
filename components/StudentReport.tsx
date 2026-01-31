@@ -2011,7 +2011,7 @@ const StudentReport = ({
                 <Button size="small" icon={<PrinterOutlined />} onClick={() => handlePrint()}>
                   In bảng điểm
                 </Button>
-                <Button size="small" icon={<DownloadOutlined />} onClick={() => handleExportExcel()}>
+                <Button size="small" icon={<DownloadOutlined />} onClick={() => handleExportScoreTable()}>
                   Xuất Excel
                 </Button>
               </Space>
