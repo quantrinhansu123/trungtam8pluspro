@@ -1316,28 +1316,52 @@ const InvoicePage = () => {
     });
   };
 
+  // Helper function to merge multiple invoices from same student into one
+  const mergeStudentInvoices = (invoices: StudentInvoice[]): StudentInvoice => {
+    if (invoices.length === 0) {
+      throw new Error("No invoices to merge");
+    }
+    if (invoices.length === 1) {
+      return invoices[0];
+    }
+
+    // Use first invoice as base, merge sessions from all invoices
+    const base = invoices[0];
+    const allSessions = invoices.flatMap(inv => inv.sessions || []);
+    const totalAmount = invoices.reduce((sum, inv) => sum + (inv.totalAmount || 0), 0);
+    const totalSessions = invoices.reduce((sum, inv) => sum + (inv.totalSessions || 0), 0);
+    const totalDiscount = invoices.reduce((sum, inv) => sum + (inv.discount || 0), 0);
+    const totalFinalAmount = invoices.reduce((sum, inv) => sum + (inv.finalAmount || 0), 0);
+
+    return {
+      ...base,
+      sessions: allSessions,
+      totalSessions,
+      totalAmount,
+      discount: totalDiscount,
+      finalAmount: totalFinalAmount,
+    };
+  };
+
   // View and export invoice
   const viewStudentInvoice = (invoice: StudentInvoice) => {
     let currentInvoiceData = { ...invoice };
     const currentIncludeQR = invoiceQRPreferences[invoice.id] !== false; // Get QR preference from list
     let modal: any = null;
 
-    // Get the latest data from state
+    // Get the latest data from state - but preserve merged sessions
     const getLatestInvoiceData = () => {
       const latestInvoiceData = studentInvoiceStatus[invoice.id];
       let updatedInvoice = { ...currentInvoiceData };
 
-      // Merge with latest data if available
+      // Merge with latest data if available, but keep the merged sessions
       if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
         updatedInvoice = {
           ...currentInvoiceData,
           studentName: latestInvoiceData.studentName || currentInvoiceData.studentName,
           studentCode: latestInvoiceData.studentCode || currentInvoiceData.studentCode,
-          totalSessions: latestInvoiceData.totalSessions || currentInvoiceData.totalSessions,
-          totalAmount: latestInvoiceData.totalAmount || currentInvoiceData.totalAmount,
-          discount: latestInvoiceData.discount || currentInvoiceData.discount,
-          finalAmount: latestInvoiceData.finalAmount || currentInvoiceData.finalAmount,
-          sessions: latestInvoiceData.sessions || currentInvoiceData.sessions
+          // Keep the merged sessions - don't override with single invoice sessions from Firebase
+          // Only update name/code from latest Firebase data
         };
       }
       return updatedInvoice;
@@ -2699,17 +2723,13 @@ const InvoicePage = () => {
     const latestInvoiceData = studentInvoiceStatus[invoice.id];
     let updatedInvoice = { ...invoice };
 
-    // Merge with latest data if available
+    // Only update name/code from Firebase, preserve merged sessions
     if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
       updatedInvoice = {
         ...invoice,
         studentName: latestInvoiceData.studentName || invoice.studentName,
         studentCode: latestInvoiceData.studentCode || invoice.studentCode,
-        totalSessions: latestInvoiceData.totalSessions || invoice.totalSessions,
-        totalAmount: latestInvoiceData.totalAmount || invoice.totalAmount,
-        discount: latestInvoiceData.discount || invoice.discount,
-        finalAmount: latestInvoiceData.finalAmount || invoice.finalAmount,
-        sessions: latestInvoiceData.sessions || invoice.sessions
+        // Keep the merged sessions - don't override with single invoice sessions from Firebase
       };
     }
 
@@ -2750,18 +2770,20 @@ const InvoicePage = () => {
       return;
     }
 
-    // Get all invoices for selected students
+    // Get all invoices for selected students and merge by student
     const groupedByStudent = new Map(groupedStudentInvoices.map((g) => [g.studentId, g]));
-    const invoicesToPrint: StudentInvoice[] = [];
+    const mergedInvoicesToPrint: StudentInvoice[] = [];
 
     selectedRowKeys.forEach((studentIdKey) => {
       const group = groupedByStudent.get(String(studentIdKey));
-      if (group) {
-        invoicesToPrint.push(...group.invoices);
+      if (group && group.invoices.length > 0) {
+        // Merge all invoices of this student into one
+        const mergedInvoice = mergeStudentInvoices(group.invoices);
+        mergedInvoicesToPrint.push(mergedInvoice);
       }
     });
 
-    if (invoicesToPrint.length === 0) {
+    if (mergedInvoicesToPrint.length === 0) {
       message.warning("Không tìm thấy phiếu thu để in");
       return;
     }
@@ -2773,22 +2795,19 @@ const InvoicePage = () => {
       return;
     }
 
-    // Generate HTML for all invoices
-    const allInvoiceHTML = invoicesToPrint
+    // Generate HTML for all merged invoices
+    const allInvoiceHTML = mergedInvoicesToPrint
       .map((invoice) => {
         const latestInvoiceData = studentInvoiceStatus[invoice.id];
         let updatedInvoice = { ...invoice };
 
+        // Only update name/code from Firebase, preserve merged sessions
         if (typeof latestInvoiceData === "object" && latestInvoiceData !== null) {
           updatedInvoice = {
             ...invoice,
             studentName: latestInvoiceData.studentName || invoice.studentName,
             studentCode: latestInvoiceData.studentCode || invoice.studentCode,
-            totalSessions: latestInvoiceData.totalSessions || invoice.totalSessions,
-            totalAmount: latestInvoiceData.totalAmount || invoice.totalAmount,
-            discount: latestInvoiceData.discount || invoice.discount,
-            finalAmount: latestInvoiceData.finalAmount || invoice.finalAmount,
-            sessions: latestInvoiceData.sessions || invoice.sessions,
+            // Keep merged sessions - don't override
           };
         }
 
@@ -2825,7 +2844,7 @@ const InvoicePage = () => {
       printWindow.print();
     }, 500);
 
-    message.success(`Đang in ${invoicesToPrint.length} phiếu thu...`);
+    message.success(`Đang in ${mergedInvoicesToPrint.length} phiếu thu...`);
   };
 
   // Expandable row render for student invoice details
@@ -3210,6 +3229,7 @@ const InvoicePage = () => {
         align: "center" as const,
         render: (_: any, record: GroupedStudentInvoice) => {
           const firstInvoice = record.invoices[0];
+          const mergedInvoice = mergeStudentInvoices(record.invoices);
           const hasQR = invoiceQRPreferences[firstInvoice.id] !== false;
 
           const menu = (
@@ -3217,7 +3237,7 @@ const InvoicePage = () => {
               <Menu.Item
                 key="view"
                 icon={<EyeOutlined />}
-                onClick={() => viewStudentInvoice(firstInvoice)}
+                onClick={() => viewStudentInvoice(mergedInvoice)}
               >
                 Xem
               </Menu.Item>
@@ -3225,9 +3245,9 @@ const InvoicePage = () => {
                 key="edit"
                 icon={<EditOutlined />}
                 onClick={() => {
-                  setEditingInvoice(firstInvoice);
+                  setEditingInvoice(mergedInvoice);
                   const prices: Record<string, number> = {};
-                  firstInvoice.sessions?.forEach((session: AttendanceSession) => {
+                  mergedInvoice.sessions?.forEach((session: AttendanceSession) => {
                     const classId = session["Class ID"];
                     const classData = classes.find(c => c.id === classId);
                     const subject = classData?.["Môn học"] || session["Môn học"] || "Chưa xác định";
@@ -3236,7 +3256,7 @@ const InvoicePage = () => {
                     }
                   });
                   setEditSessionPrices(prices);
-                  setEditDiscount(firstInvoice.discount || 0);
+                  setEditDiscount(mergedInvoice.discount || 0);
                   setEditInvoiceModalOpen(true);
                 }}
               >
@@ -3245,7 +3265,7 @@ const InvoicePage = () => {
               <Menu.Item
                 key="print"
                 icon={<PrinterOutlined />}
-                onClick={() => printInvoice(firstInvoice, hasQR)}
+                onClick={() => printInvoice(mergedInvoice, hasQR)}
               >
                 In
               </Menu.Item>
@@ -3272,7 +3292,7 @@ const InvoicePage = () => {
         },
       },
     ],
-    [viewStudentInvoice, updateStudentDiscount, updateStudentInvoiceStatus, handleDeleteInvoice, setEditingInvoice, setEditSessionPrices, setEditDiscount, setEditInvoiceModalOpen]
+    [viewStudentInvoice, updateStudentDiscount, updateStudentInvoiceStatus, handleDeleteInvoice, setEditingInvoice, setEditSessionPrices, setEditDiscount, setEditInvoiceModalOpen, mergeStudentInvoices, classes]
   );
 
   // Paid student invoice columns (flat, not grouped)
