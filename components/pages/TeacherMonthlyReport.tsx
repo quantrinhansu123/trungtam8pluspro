@@ -410,6 +410,18 @@ const TeacherMonthlyReport = () => {
         status = existingComment.status;
       }
 
+      // Merge comments từ existingComment vào classStats đã tính toán
+      // Để giữ lại nhận xét đã lưu trước đó
+      const mergedClassStats = classStats.map(cs => {
+        const existingClassStat = existingComment?.stats?.classStats?.find(
+          ecs => ecs.classId === cs.classId
+        );
+        return {
+          ...cs,
+          comment: existingClassStat?.comment || cs.comment || ""
+        };
+      });
+
       return {
         key: studentId,
         studentId,
@@ -421,7 +433,7 @@ const TeacherMonthlyReport = () => {
         attendanceRate,
         averageScore,
         totalBonusPoints,
-        classStats,
+        classStats: mergedClassStats,
         classIds,
         classNames,
         aiComment: existingComment?.aiComment || "",

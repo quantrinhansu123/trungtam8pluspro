@@ -256,8 +256,16 @@ const StudentReport = ({
       
       if (!monthComment?.stats?.classStats) continue;
       
+      // Match linh hoạt: so sánh className hoặc subject với input
+      // Cũng kiểm tra nếu className bắt đầu bằng input (để match "Toán 4" với "Toán 4 - Thầy ABC")
       const classStats = monthComment.stats.classStats.find(
-        (cs) => cs.className === className || cs.subject === className
+        (cs) => {
+          const csClassNameBase = cs.className?.split(" - ")[0] || "";
+          return cs.className === className || 
+                 cs.subject === className ||
+                 csClassNameBase === className ||
+                 cs.className?.startsWith(className);
+        }
       );
       
       if (classStats?.comment) {

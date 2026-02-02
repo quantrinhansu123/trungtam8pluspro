@@ -540,8 +540,8 @@ const AdminMonthlyReportReview = () => {
       : 0;
 
     // Generate BẢNG ĐIỂM THEO MÔN - đọc từ cả Điểm_tự_nhập và Điểm kiểm tra
+    // LUÔN hiển thị section này cho mỗi lớp, kể cả khi không có điểm (để hiển thị nhận xét)
     let scoreTablesHTML = "";
-    let hasAnyScoreInAnyClass = false;
     
     classStats.forEach((cs: ClassStats) => {
       const classSessions = allStudentSessions.filter((s) => s["Class ID"] === cs.classId);
@@ -586,10 +586,6 @@ const AdminMonthlyReportReview = () => {
         ? allClassScores.reduce((sum, s) => sum + s.score, 0) / allClassScores.length
         : 0;
 
-      if (allClassScores.length > 0) {
-        hasAnyScoreInAnyClass = true;
-      }
-
       let tableRows = "";
       classSessions.forEach((session) => {
         const record = session["Điểm danh"]?.find((r) => r["Student ID"] === comment.studentId);
@@ -630,39 +626,37 @@ const AdminMonthlyReportReview = () => {
         }
       });
 
-      // Chỉ thêm bảng điểm cho lớp này nếu có ít nhất 1 điểm hoặc có sessions
-      if (classScoresFromDB.length > 0 || classSessions.length > 0) {
-        scoreTablesHTML += `
-          <div class="subject-section">
-            <div class="subject-header">
-              <span class="subject-name">📚 ${cs.className} ${cs.subject ? `(${cs.subject})` : ""}</span>
-              <span class="subject-avg">TB: <strong>${classAvg > 0 ? classAvg.toFixed(1) : "-"}</strong></span>
-            </div>
-            <table class="score-table">
-              <thead>
-                <tr>
-                  <th style="width: 55px;">Ngày</th>
-                  <th style="width: 65px;">Chuyên cần</th>
-                  <th style="width: 55px;">% BTVN</th>
-                  <th style="width: 100px;">Tên bài KT</th>
-                  <th style="width: 50px;">Điểm</th>
-                  <th style="width: 65px;">Điểm thưởng</th>
-                  <th>Ghi chú</th>
-                </tr>
-              </thead>
-              <tbody>
-                ${tableRows || '<tr><td colspan="7" style="text-align: center; color: #999;">Không có dữ liệu</td></tr>'}
-              </tbody>
-            </table>
-            ${cs.comment ? `
-            <div class="subject-comment">
-              <div class="comment-label">📝 Nhận xét môn học:</div>
-              <div class="comment-content">${cs.comment.replace(/\n/g, "<br/>")}</div>
-            </div>
-            ` : ""}
+      // LUÔN tạo bảng điểm cho mỗi lớp trong classStats (để hiển thị nhận xét nếu có)
+      scoreTablesHTML += `
+        <div class="subject-section">
+          <div class="subject-header">
+            <span class="subject-name">📚 ${cs.className} ${cs.subject ? `(${cs.subject})` : ""}</span>
+            <span class="subject-avg">TB: <strong>${classAvg > 0 ? classAvg.toFixed(1) : "-"}</strong></span>
           </div>
-        `;
-      }
+          <table class="score-table">
+            <thead>
+              <tr>
+                <th style="width: 55px;">Ngày</th>
+                <th style="width: 65px;">Chuyên cần</th>
+                <th style="width: 55px;">% BTVN</th>
+                <th style="width: 100px;">Tên bài KT</th>
+                <th style="width: 50px;">Điểm</th>
+                <th style="width: 65px;">Điểm thưởng</th>
+                <th>Ghi chú</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${tableRows || '<tr><td colspan="7" style="text-align: center; color: #999;">Không có dữ liệu</td></tr>'}
+            </tbody>
+          </table>
+          ${cs.comment ? `
+          <div class="subject-comment">
+            <div class="comment-label">📝 Nhận xét môn học:</div>
+            <div class="comment-content">${cs.comment.replace(/\n/g, "<br/>")}</div>
+          </div>
+          ` : ""}
+        </div>
+      `;
     });
 
     // Generate LỊCH SỬ HỌC TẬP CHI TIẾT - đọc từ Điểm_tự_nhập
@@ -928,7 +922,7 @@ const AdminMonthlyReportReview = () => {
                 </div>
               </div>
 
-              ${hasAnyScoreInAnyClass ? `
+              ${scoreTablesHTML ? `
               <div class="section">
                 <div class="section-title">Bảng điểm theo môn</div>
                 ${scoreTablesHTML}
