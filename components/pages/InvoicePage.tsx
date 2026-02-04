@@ -2598,10 +2598,17 @@ const InvoicePage = () => {
         classCode: string;
         subject: string;
         sessionCount: number;
+        salaryPerSession: number;
         totalSalary: number;
         totalAllowance: number;
       }
     > = {};
+
+    // Get saved session salaries from database if available
+    const savedData = teacherSalaryStatus[salary.id];
+    const savedSessionSalaries = (typeof savedData === "object" && savedData?.sessionSalaries)
+      ? savedData.sessionSalaries
+      : {};
 
     salary.sessions.forEach((session) => {
       const classId = session["Class ID"];
@@ -2619,19 +2626,31 @@ const InvoicePage = () => {
           classCode,
           subject,
           sessionCount: 0,
+          salaryPerSession: 0,
           totalSalary: 0,
           totalAllowance: 0,
         };
       }
 
-      // Lấy Lương GV - ưu tiên từ session, fallback về class, cuối cùng là teacher
-      // Ưu tiên: Session > Class > Teacher
-      const salaryPerSession =
-        parseCurrency(session["Lương GV"]) ||          // 1. Từ Session (ưu tiên)
-        parseCurrency(classInfo?.["Lương GV"]) ||     // 2. Từ Lớp học (fallback)
-        parseCurrency(teacher?.["Lương theo buổi"]);  // 3. Từ Giáo viên (fallback cuối)
+      // Priority: saved sessionSalaries > session Lương/buổi > session Lương GV > class Lương GV > teacher Lương theo buổi
+      let salaryPerSession = 0;
+      if (savedSessionSalaries[session.id] !== undefined) {
+        salaryPerSession = savedSessionSalaries[session.id];
+      } else if (getSafeField(session, "Lương/buổi")) {
+        salaryPerSession = Number(getSafeField(session, "Lương/buổi"));
+      } else {
+        salaryPerSession =
+          parseCurrency(session["Lương GV"]) ||          // 1. Từ Session (ưu tiên)
+          parseCurrency(classInfo?.["Lương GV"]) ||     // 2. Từ Lớp học (fallback)
+          parseCurrency(teacher?.["Lương theo buổi"]);  // 3. Từ Giáo viên (fallback cuối)
+      }
 
       const allowancePerSession = parseCurrency(session["Phụ cấp di chuyển"]);
+
+      // Update salaryPerSession on first session of class
+      if (classSummary[classId].sessionCount === 0) {
+        classSummary[classId].salaryPerSession = salaryPerSession;
+      }
 
       classSummary[classId].sessionCount++;
       classSummary[classId].totalSalary += salaryPerSession;
@@ -2681,11 +2700,24 @@ const InvoicePage = () => {
               ${c.subject ? `<div style="font-size:11px;color:#666;">${subjectMap[c.subject] || c.subject}</div>` : ""}
             </td>
             <td class="pl-td pl-text-center">${c.sessionCount}</td>
+            <td class="pl-td pl-text-right">${c.salaryPerSession.toLocaleString("vi-VN")}</td>
             <td class="pl-td pl-text-right">${(c.totalSalary + c.totalAllowance).toLocaleString("vi-VN")}</td>
           </tr>
         `
       )
       .join("");
+
+    // Calculate total salary across all classes
+    const totalSalaryAll = classData.reduce((sum, item) => sum + item.totalSalary + item.totalAllowance, 0);
+
+    const totalRow = `
+      <tr style="background-color: #e8f4f8; border-top: 2px solid #003366; border-bottom: 2px solid #003366;">
+        <td class="pl-td" style="font-weight: 700; color: #003366;">Tổng lương</td>
+        <td class="pl-td pl-text-center" style="font-weight: 700; color: #003366;">${totalSessions}</td>
+        <td class="pl-td pl-text-right" style="font-weight: 700; color: #003366;"></td>
+        <td class="pl-td pl-text-right" style="font-weight: 700; color: #d32f2f; font-size: 12px;">${totalSalaryAll.toLocaleString("vi-VN")} đ</td>
+      </tr>
+    `;
 
     return `
       <div class="pl-wrapper">
@@ -2771,11 +2803,13 @@ const InvoicePage = () => {
                   <tr>
                     <th class="pl-th">Lớp học</th>
                     <th class="pl-th pl-text-center">Số buổi</th>
+                    <th class="pl-th pl-text-right">Lương/buổi (đ)</th>
                     <th class="pl-th pl-text-right">Tổng lương</th>
                   </tr>
                 </thead>
                 <tbody>
                   ${classRows}
+                  ${totalRow}
                 </tbody>
               </table>
             </div>
