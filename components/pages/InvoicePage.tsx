@@ -316,6 +316,25 @@ const InvoicePage = () => {
     };
   }, []);
 
+  // Load QR preferences from localStorage on mount
+  useEffect(() => {
+    const savedPreferences: Record<string, boolean> = {};
+    // Load all saved QR preferences from localStorage
+    for (let i = 0; i < localStorage.length; i++) {
+      const key = localStorage.key(i);
+      if (key && key.startsWith("qr-pref-")) {
+        const invoiceId = key.replace("qr-pref-", "");
+        const value = localStorage.getItem(key);
+        if (value !== null) {
+          savedPreferences[invoiceId] = value === "true";
+        }
+      }
+    }
+    if (Object.keys(savedPreferences).length > 0) {
+      setInvoiceQRPreferences(savedPreferences);
+    }
+  }, []);
+
   // Fetch data
   useEffect(() => {
     const fetchData = async () => {
@@ -2813,7 +2832,6 @@ const InvoicePage = () => {
                 </tbody>
               </table>
             </div>
-
             <div class="pl-info-row" style="margin-top:4px;">
               <span class="pl-label">Ghi chú</span>
               <span class="pl-value" style="text-align:left; flex:1; margin-left:8px;">${note}</span>
@@ -3365,10 +3383,13 @@ const InvoicePage = () => {
               size="small"
               type={hasQR ? "primary" : "default"}
               onClick={() => {
+                const newPreference = !hasQR;
                 setInvoiceQRPreferences(prev => ({
                   ...prev,
-                  [firstInvoice.id]: !hasQR
+                  [firstInvoice.id]: newPreference
                 }));
+                // Persist to localStorage
+                localStorage.setItem(`qr-pref-${firstInvoice.id}`, String(newPreference));
               }}
             >
               {hasQR ? "✓" : "✗"}
