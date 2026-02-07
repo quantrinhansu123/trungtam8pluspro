@@ -20,11 +20,12 @@ export default function AdminLayout() {
     );
   }
 
+  // DISABLED: Authentication check - allow access without login
   // If not authenticated and not loading, redirect to login with current location to return after login
   // Only redirect if we're sure user is not authenticated (not just loading)
-  if (!loading && !currentUser) {
-    return <Navigate to="/login" state={{ from: location }} replace />;
-  }
+  // if (!loading && !currentUser) {
+  //   return <Navigate to="/login" state={{ from: location }} replace />;
+  // }
 
   // If still loading but we have currentUser (restored from localStorage), show content
   // This prevents redirect during the brief moment when onAuthStateChanged is checking
