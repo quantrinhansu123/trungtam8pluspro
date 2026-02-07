@@ -5,6 +5,7 @@ import {
   Modal,
   Form,
   Input,
+  InputNumber,
   Select,
   Tag,
   Space,
@@ -28,6 +29,7 @@ import {
   EyeOutlined,
   FileTextOutlined,
   DownloadOutlined,
+  ReloadOutlined,
 } from "@ant-design/icons";
 import { useClasses } from "../../hooks/useClasses";
 import { Class, AttendanceSession } from "../../types";
@@ -68,6 +70,10 @@ const ClassManagement = () => {
   const [roomsMap, setRoomsMap] = useState<Record<string, any>>({});
   const [selectedMonth, setSelectedMonth] = useState<Dayjs>(dayjs());
   const [loadingSessions, setLoadingSessions] = useState(false);
+  
+  // Inline editing state for tuition fee in student list
+  const [editingTuitionStudentId, setEditingTuitionStudentId] = useState<string | null>(null);
+  const [editingTuitionValue, setEditingTuitionValue] = useState<number | null>(null);
 
   const handleEdit = (record: Class) => {
     setEditingClass(record);
@@ -170,6 +176,184 @@ const ClassManagement = () => {
   const handleViewDetail = (record: Class) => {
     setViewingClass(record);
     setIsDetailModalOpen(true);
+  };
+
+  const handleSaveTuitionFee = async (studentId: string, tuitionFee: number | null) => {
+    try {
+      const student = students.find(s => s.id === studentId);
+      if (!student) {
+        message.error("Không tìm thấy học sinh");
+        setEditingTuitionStudentId(null);
+        setEditingTuitionValue(null);
+        return;
+      }
+
+      const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
+      const updatedData = {
+        ...student,
+        "hoc_phi_rieng": tuitionFee || null,
+      };
+
+      const response = await fetch(url, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedData),
+      });
+
+      if (response.ok) {
+        // Update local state
+        setStudents(students.map(s => 
+          s.id === studentId 
+            ? { ...s, "hoc_phi_rieng": tuitionFee || null }
+            : s
+        ));
+        setEditingTuitionStudentId(null);
+        setEditingTuitionValue(null);
+        message.success("Đã cập nhật học phí riêng thành công!");
+      } else {
+        const errorText = await response.text();
+        console.error("❌ Failed to update tuition fee. Status:", response.status, errorText);
+        message.error(`Không cập nhật được học phí. Status: ${response.status}`);
+        setEditingTuitionStudentId(null);
+        setEditingTuitionValue(null);
+      }
+    } catch (error) {
+      console.error("Error updating tuition fee:", error);
+      message.error("Có lỗi xảy ra khi cập nhật học phí");
+      setEditingTuitionStudentId(null);
+      setEditingTuitionValue(null);
+    }
+  };
+
+  const handleSyncStudents = async () => {
+    if (!viewingClass) {
+      message.error("Không tìm thấy thông tin lớp học");
+      return;
+    }
+
+    const studentIds = viewingClass["Student IDs"] || [];
+    if (studentIds.length === 0) {
+      message.warning("Lớp học chưa có học sinh nào");
+      return;
+    }
+
+    try {
+      message.loading({ content: "Đang đồng bộ dữ liệu học sinh...", key: "sync" });
+      
+      // Fetch fresh student data from Firebase
+      const studentsRes = await fetch(
+        `${DATABASE_URL_BASE}/datasheet/Danh_sách_học_sinh.json?_=${new Date().getTime()}`,
+        { cache: "no-cache" }
+      );
+      const studentsData = await studentsRes.json();
+      
+      if (studentsData) {
+        const studentsArray = Object.entries(studentsData).map(
+          ([id, data]: [string, any]) => ({
+            id,
+            ...data,
+          })
+        );
+        setStudents(studentsArray);
+        message.success({ content: `Đã đồng bộ dữ liệu cho ${studentIds.length} học sinh`, key: "sync" });
+      } else {
+        message.error({ content: "Không thể lấy dữ liệu học sinh", key: "sync" });
+      }
+    } catch (error) {
+      console.error("Error syncing students:", error);
+      message.error({ content: "Có lỗi xảy ra khi đồng bộ dữ liệu", key: "sync" });
+    }
+  };
+
+  const handleFillAllTuitionFees = async () => {
+    if (!viewingClass) {
+      message.error("Không tìm thấy thông tin lớp học");
+      return;
+    }
+
+    const classTuitionFee = viewingClass["Học phí mỗi buổi"];
+    if (!classTuitionFee || classTuitionFee === 0) {
+      message.warning("Lớp học chưa có học phí mỗi buổi. Vui lòng cập nhật học phí lớp học trước.");
+      return;
+    }
+
+    const studentIds = viewingClass["Student IDs"] || [];
+    if (studentIds.length === 0) {
+      message.warning("Lớp học chưa có học sinh nào");
+      return;
+    }
+
+    Modal.confirm({
+      title: "Điền học phí riêng",
+      content: `Bạn có chắc chắn muốn điền học phí chung (${classTuitionFee.toLocaleString('vi-VN')} đ) vào tất cả ${studentIds.length} học sinh trong lớp này không?`,
+      okText: "Điền",
+      cancelText: "Hủy",
+      onOk: async () => {
+        try {
+          let successCount = 0;
+          let failCount = 0;
+          const updatedStudentIds: string[] = [];
+
+          // Update all students in parallel
+          const updatePromises = studentIds.map(async (studentId) => {
+            const student = students.find(s => s.id === studentId);
+            if (!student) {
+              failCount++;
+              return null;
+            }
+
+            const url = `${DATABASE_URL_BASE}/datasheet/Danh_s%C3%A1ch_h%E1%BB%8Dc_sinh/${studentId}.json`;
+            const updatedData = {
+              ...student,
+              "hoc_phi_rieng": classTuitionFee,
+            };
+
+            try {
+              const response = await fetch(url, {
+                method: "PUT",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(updatedData),
+              });
+
+              if (response.ok) {
+                successCount++;
+                updatedStudentIds.push(studentId);
+                return studentId;
+              } else {
+                failCount++;
+                return null;
+              }
+            } catch (error) {
+              console.error(`Error updating student ${studentId}:`, error);
+              failCount++;
+              return null;
+            }
+          });
+
+          await Promise.all(updatePromises);
+
+          // Update local state once after all updates are complete
+          if (updatedStudentIds.length > 0) {
+            setStudents(prevStudents => 
+              prevStudents.map(s => 
+                updatedStudentIds.includes(s.id)
+                  ? { ...s, "hoc_phi_rieng": classTuitionFee }
+                  : s
+              )
+            );
+          }
+
+          if (successCount > 0) {
+            message.success(`Đã điền học phí cho ${successCount} học sinh thành công!${failCount > 0 ? ` (${failCount} học sinh thất bại)` : ''}`);
+          } else {
+            message.error("Không thể điền học phí cho học sinh nào");
+          }
+        } catch (error) {
+          console.error("Error filling tuition fees:", error);
+          message.error("Có lỗi xảy ra khi điền học phí");
+        }
+      },
+    });
   };
 
   const handleViewGrades = (record: Class) => {
@@ -876,6 +1060,8 @@ const ClassManagement = () => {
           setIsDetailModalOpen(false);
           setViewingClass(null);
           setClassSessionHistory([]);
+          setEditingTuitionStudentId(null);
+          setEditingTuitionValue(null);
         }}
         footer={[
           <Button key="close" onClick={() => {
@@ -956,9 +1142,26 @@ const ClassManagement = () => {
                     {viewingClass["Student IDs"] &&
                       viewingClass["Student IDs"].length > 0 && (
                         <div style={{ marginTop: 24 }}>
-                          <h4>
-                            Danh sách học sinh ({viewingClass["Student IDs"].length}):
-                          </h4>
+                          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                            <h4 style={{ margin: 0 }}>
+                              Danh sách học sinh ({viewingClass["Student IDs"].length}):
+                            </h4>
+                            <Space>
+                              <Button
+                                icon={<ReloadOutlined />}
+                                onClick={handleSyncStudents}
+                              >
+                                Đồng bộ
+                              </Button>
+                              <Button
+                                type="primary"
+                                onClick={handleFillAllTuitionFees}
+                                disabled={!viewingClass["Học phí mỗi buổi"] || viewingClass["Học phí mỗi buổi"] === 0}
+                              >
+                                Điền học phí
+                              </Button>
+                            </Space>
+                          </div>
                   <Table
                     dataSource={viewingClass["Student IDs"]
                       .map((studentId) => {
@@ -971,6 +1174,7 @@ const ClassManagement = () => {
                               "Họ và tên": student["Họ và tên"] || "-",
                               "Số điện thoại": student["Số điện thoại"] || "-",
                               "SĐT phụ huynh": student["SĐT phụ huynh"] || "-",
+                              "hoc_phi_rieng": student["hoc_phi_rieng"],
                               "Email": student["Email"] || "-",
                               "Trạng thái": student["Trạng thái"] || "-",
                             }
@@ -1009,6 +1213,73 @@ const ClassManagement = () => {
                         dataIndex: "SĐT phụ huynh",
                         key: "parentPhone",
                         width: 130,
+                      },
+                      {
+                        title: "Học phí riêng",
+                        dataIndex: "hoc_phi_rieng",
+                        key: "hoc_phi_rieng",
+                        width: 180,
+                        render: (fee: number, record: any) => {
+                          const isEditing = editingTuitionStudentId === record.id;
+                          const currentValue = isEditing ? editingTuitionValue : fee;
+                          
+                          if (isEditing) {
+                            return (
+                              <InputNumber<number>
+                                value={currentValue || undefined}
+                                onChange={(value) => setEditingTuitionValue(value || null)}
+                                onPressEnter={async () => {
+                                  if (editingTuitionStudentId) {
+                                    await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
+                                  }
+                                }}
+                                onBlur={async () => {
+                                  if (editingTuitionStudentId) {
+                                    await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
+                                  }
+                                }}
+                                min={0}
+                                step={10000}
+                                style={{ width: "100%" }}
+                                formatter={(value) => `${value}`.replace(/\B(?=(\d{3})+(?!\d))/g, ',')}
+                                parser={(value) => {
+                                  const parsed = value!.replace(/\$\s?|(,*)/g, '');
+                                  return parsed === '' ? 0 : Number(parsed);
+                                }}
+                                autoFocus
+                              />
+                            );
+                          }
+                          
+                          return (
+                            <div
+                              onClick={async () => {
+                                // Save previous editing row if exists
+                                if (editingTuitionStudentId && editingTuitionStudentId !== record.id) {
+                                  await handleSaveTuitionFee(editingTuitionStudentId, editingTuitionValue);
+                                }
+                                setEditingTuitionStudentId(record.id);
+                                setEditingTuitionValue(fee || null);
+                              }}
+                              style={{
+                                cursor: "pointer",
+                                padding: "4px 8px",
+                                borderRadius: "4px",
+                                minHeight: "32px",
+                                display: "flex",
+                                alignItems: "center",
+                              }}
+                              onMouseEnter={(e) => {
+                                e.currentTarget.style.backgroundColor = "#f5f5f5";
+                              }}
+                              onMouseLeave={(e) => {
+                                e.currentTarget.style.backgroundColor = "transparent";
+                              }}
+                            >
+                              {fee ? `${fee.toLocaleString('vi-VN')} đ` : "-"}
+                            </div>
+                          );
+                        },
                       },
                       {
                         title: "Email",
