@@ -10,34 +10,11 @@ export default function AdminLayout() {
   const { currentUser, userProfile, loading } = useAuth();
   const location = useLocation();
 
-  // Show a simple loader while auth state is resolving
-  // But only if we don't have a currentUser yet (to avoid redirect during restore)
-  if (loading && !currentUser) {
-    return (
-      <div className="flex items-center justify-center h-screen">
-        <Loader full/>
-      </div>
-    );
-  }
-
   // DISABLED: Authentication check - allow access without login
-  // If not authenticated and not loading, redirect to login with current location to return after login
-  // Only redirect if we're sure user is not authenticated (not just loading)
-  // if (!loading && !currentUser) {
-  //   return <Navigate to="/login" state={{ from: location }} replace />;
-  // }
-
-  // If still loading but we have currentUser (restored from localStorage), show content
-  // This prevents redirect during the brief moment when onAuthStateChanged is checking
-  if (loading && currentUser) {
-    // User is restored, just wait for auth check to complete
-    // Show content instead of loader to avoid flicker
-  }
-
-  // If user is parent, redirect to parent portal
-  if (userProfile?.role === "parent") {
-    return <Navigate to="/parent-portal" replace />;
-  }
+  // Tắt authentication để cho phép truy cập không cần đăng nhập
+  // Bỏ qua tất cả các check authentication
+  
+  // Bỏ qua tất cả các check và hiển thị nội dung trực tiếp
 
   // Authorization: require admin or teacher
   // Parents are not allowed in workspace
